@@ -393,16 +393,22 @@ def get_ads(city, ad_type, limit=10):
     conn = sqlite3.connect("annonces.db")
     c = conn.cursor()
     now = datetime.now().isoformat()
-    if ad_type == "all":
-        c.execute("""SELECT * FROM annonces
-            WHERE city=? AND (expires_at IS NULL OR expires_at > ?)
-            ORDER BY is_vip DESC, created_at DESC LIMIT ?""",
-            (city, now, limit))
-    else:
-        c.execute("""SELECT * FROM annonces
-            WHERE city=? AND type=? AND (expires_at IS NULL OR expires_at > ?)
-            ORDER BY is_vip DESC, created_at DESC LIMIT ?""",
-            (city, ad_type, now, limit))
+    try:
+        if ad_type == "all":
+            c.execute("""SELECT * FROM annonces
+                WHERE city=? AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY is_vip DESC, created_at DESC LIMIT ?""",
+                (city, now, limit))
+        else:
+            c.execute("""SELECT * FROM annonces
+                WHERE city=? AND type=? AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY is_vip DESC, created_at DESC LIMIT ?""",
+                (city, ad_type, now, limit))
+    except Exception:
+        if ad_type == "all":
+            c.execute("SELECT * FROM annonces WHERE city=? ORDER BY is_vip DESC, created_at DESC LIMIT ?", (city, limit))
+        else:
+            c.execute("SELECT * FROM annonces WHERE city=? AND type=? ORDER BY is_vip DESC, created_at DESC LIMIT ?", (city, ad_type, limit))
     rows = c.fetchall()
     conn.close()
     return rows
@@ -433,15 +439,26 @@ def get_db_stats():
     conn = sqlite3.connect("annonces.db")
     c = conn.cursor()
     now = datetime.now().isoformat()
-    c.execute("SELECT COUNT(*) FROM annonces WHERE expires_at > ?", (now,))
-    total = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM annonces WHERE is_vip=1 AND expires_at > ?", (now,))
-    vip = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM annonces WHERE created_at > ?",
-              ((datetime.now() - timedelta(days=1)).isoformat(),))
-    today = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM annonces WHERE source='site' AND expires_at > ?", (now,))
-    from_site = c.fetchone()[0]
+    try:
+        c.execute("SELECT COUNT(*) FROM annonces WHERE expires_at > ?", (now,))
+        total = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM annonces WHERE is_vip=1 AND expires_at > ?", (now,))
+        vip = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM annonces WHERE created_at > ?",
+                  ((datetime.now() - timedelta(days=1)).isoformat(),))
+        today = c.fetchone()[0]
+        try:
+            c.execute("SELECT COUNT(*) FROM annonces WHERE source='site' AND expires_at > ?", (now,))
+            from_site = c.fetchone()[0]
+        except Exception:
+            from_site = 0
+    except Exception:
+        c.execute("SELECT COUNT(*) FROM annonces", )
+        total = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM annonces WHERE is_vip=1")
+        vip = c.fetchone()[0]
+        today = 0
+        from_site = 0
     conn.close()
     return total, vip, today, from_site
 
