@@ -1,7 +1,7 @@
 import logging
 import sqlite3
 import os
-import json
+import re
 from datetime import datetime, timedelta
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -16,49 +16,45 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
-BOT_TOKEN  = os.environ.get("BOT_TOKEN", "8549540559:AAEd3EllVX0oQnaRUooL54krXwSwg5Iz_wA")
-CHANNEL_ID = "@amourannonce"
-ADMIN_ID   = 2021397237        # только ты получаешь уведомления
+BOT_TOKEN   = os.environ.get("BOT_TOKEN", "8549540559:AAEd3EllVX0oQnaRUooL54krXwSwg5Iz_wA")
+CHANNEL_ID  = "@amourannonce"
+ADMIN_ID    = 2021397237
+SUPPORT_URL = "https://t.me/loveparis777"
+VMODLS_URL  = "https://t.me/VModls"
 MINIAPP_URL = "https://amourannonce.com"
 MAX_PHOTOS  = 8
 
 # ─── STATES ───────────────────────────────────────────────────────────────────
 (
     CHOOSE_LANG, MAIN_MENU,
-    M_REGION, M_CITY, M_NAME, M_AGE, M_HEIGHT, M_WEIGHT,
-    M_MEASUREMENTS, M_NATIONALITY, M_LANGUAGES, M_INCALL,
-    M_PRICE_1H, M_PRICE_2H, M_PRICE_NIGHT,
-    M_CONTACT, M_PHOTOS,
+    # Модель
+    M_REGION, M_CITY, M_NAME, M_AGE, M_NATIONALITY,
+    M_HEIGHT, M_WEIGHT, M_MEASUREMENTS,
+    M_HAIR, M_INCALL, M_LANGUAGES, M_AVAILABILITY,
+    M_PRICES, M_DESCRIPTION, M_CONTACT, M_PHOTOS,
+    # Тур
     T_WHO, T_FROM_CITY, T_TO_REGION, T_TO_CITY,
-    T_DATE_FROM, T_DATE_TO, T_NOTES, T_CONTACT, T_PHOTOS,
+    T_DATE_FROM, T_DATE_TO, T_NAME, T_NOTES, T_CONTACT, T_PHOTOS,
+    # Объявление
     A_REGION, A_CITY, A_TITLE, A_DESC, A_CONTACT, A_PHOTOS,
+    # Просмотр
     BR_REGION, BR_CITY, BR_TYPE,
+    # Админ
     ADMIN_MENU,
-) = range(36)
+    # Быстрое добавление от админа
+    ADM_ADD_CITY, ADM_ADD_NAME, ADM_ADD_AGE, ADM_ADD_PRICES,
+    ADM_ADD_CONTACT, ADM_ADD_PHOTOS,
+) = range(44)
 
 # ─── REGIONS ──────────────────────────────────────────────────────────────────
 REGIONS = {
-    "🗼 Paris — Centre (1-4)": [
-        "Paris 1er","Paris 2e","Paris 3e","Paris 4e",
-    ],
-    "🗼 Paris — Rive Gauche (5-7)": [
-        "Paris 5e","Paris 6e","Paris 7e",
-    ],
-    "🗼 Paris — Grands Boulevards (8-10)": [
-        "Paris 8e","Paris 9e","Paris 10e",
-    ],
-    "🗼 Paris — Est (11-12)": [
-        "Paris 11e","Paris 12e",
-    ],
-    "🗼 Paris — Sud (13-15)": [
-        "Paris 13e","Paris 14e","Paris 15e",
-    ],
-    "🗼 Paris — Ouest & Nord (16-18)": [
-        "Paris 16e","Paris 17e","Paris 18e",
-    ],
-    "🗼 Paris — Nord-Est (19-20)": [
-        "Paris 19e","Paris 20e",
-    ],
+    "🗼 Paris — Centre (1-4)": ["Paris 1er","Paris 2e","Paris 3e","Paris 4e"],
+    "🗼 Paris — Rive Gauche (5-7)": ["Paris 5e","Paris 6e","Paris 7e"],
+    "🗼 Paris — Grands Boulevards (8-10)": ["Paris 8e","Paris 9e","Paris 10e"],
+    "🗼 Paris — Est (11-12)": ["Paris 11e","Paris 12e"],
+    "🗼 Paris — Sud (13-15)": ["Paris 13e","Paris 14e","Paris 15e"],
+    "🗼 Paris — Ouest & Nord (16-18)": ["Paris 16e","Paris 17e","Paris 18e"],
+    "🗼 Paris — Nord-Est (19-20)": ["Paris 19e","Paris 20e"],
     "🏙 Île-de-France — Proche banlieue": [
         "Boulogne-Billancourt","Neuilly-sur-Seine","Levallois-Perret",
         "Issy-les-Moulineaux","Courbevoie","La Défense","Puteaux",
@@ -68,7 +64,6 @@ REGIONS = {
     "🏙 Île-de-France — Grande banlieue": [
         "Versailles","Saint-Germain-en-Laye","Massy","Créteil",
         "Évry","Pontoise","Cergy","Melun","Fontainebleau",
-        "Roissy / CDG","Orly",
     ],
     "🏔 Auvergne-Rhône-Alpes": [
         "Lyon","Annecy","Grenoble","Chambéry","Clermont-Ferrand",
@@ -81,37 +76,22 @@ REGIONS = {
         "Menton","Grasse","Villefranche-sur-Mer","Avignon","Fréjus",
     ],
     "🌸 Occitanie": [
-        "Toulouse","Montpellier","Perpignan","Nîmes","Sète",
-        "Béziers","Montauban",
+        "Toulouse","Montpellier","Perpignan","Nîmes","Sète","Béziers","Montauban",
     ],
     "🍷 Nouvelle-Aquitaine": [
         "Bordeaux","Biarritz","Arcachon","Bayonne","La Rochelle",
         "Pau","Périgueux","Limoges","Poitiers",
     ],
-    "⚓️ Pays de la Loire": [
-        "Nantes","Angers","Le Mans","Saint-Nazaire",
-    ],
-    "🥨 Grand Est": [
-        "Strasbourg","Reims","Metz","Nancy","Mulhouse","Colmar",
-    ],
-    "🍇 Bourgogne-Franche-Comté": [
-        "Dijon","Besançon","Belfort",
-    ],
-    "🌿 Normandie": [
-        "Rouen","Caen","Le Havre","Deauville","Cherbourg",
-    ],
-    "🏛 Hauts-de-France": [
-        "Lille","Amiens","Dunkerque","Valenciennes",
-    ],
-    "🌊 Bretagne": [
-        "Rennes","Brest","Quimper","Saint-Malo","Lorient","Vannes",
-    ],
-    "🌺 Centre-Val de Loire": [
-        "Tours","Orléans","Blois",
-    ],
+    "⚓️ Pays de la Loire": ["Nantes","Angers","Le Mans","Saint-Nazaire"],
+    "🥨 Grand Est": ["Strasbourg","Reims","Metz","Nancy","Mulhouse","Colmar"],
+    "🍇 Bourgogne-Franche-Comté": ["Dijon","Besançon","Belfort"],
+    "🌿 Normandie": ["Rouen","Caen","Le Havre","Deauville","Cherbourg"],
+    "🏛 Hauts-de-France": ["Lille","Amiens","Dunkerque","Valenciennes"],
+    "🌊 Bretagne": ["Rennes","Brest","Quimper","Saint-Malo","Lorient","Vannes"],
+    "🌺 Centre-Val de Loire": ["Tours","Orléans","Blois"],
 }
 
-# ─── ТЕКСТЫ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ (FR/EN) ────────────────────────────────────────
+# ─── ТЕКСТЫ ───────────────────────────────────────────────────────────────────
 T = {
     "fr": {
         "welcome": (
@@ -121,13 +101,13 @@ T = {
             "et professionnels en France 🇫🇷\n\n"
             "Que souhaitez-vous faire ?"
         ),
-        "choose_lang":   "🌍 Choisissez votre langue :",
         "btn_browse":    "🔍  Voir les annonces",
         "btn_model":     "👗  Déposer mon profil",
         "btn_tour":      "✈️  En Tour",
         "btn_ad":        "📢  Publier une annonce",
         "btn_site":      "🌐  Ouvrir le site",
-        "btn_support":   "💬  Support",
+        "btn_support":   "💬  Support — @loveparis777",
+        "btn_agency":    "🌟  Agence — @VModls",
         "btn_admin":     "🔐  Admin Panel",
         "btn_back":      "◀️ Retour",
         "btn_cancel":    "✖️ Annuler",
@@ -135,39 +115,14 @@ T = {
         "btn_skip":      "⏭ Passer",
         "choose_region": "📍 Choisissez une région :",
         "choose_city":   "🏙 Choisissez une ville :",
-        "ask_name":          "👤 Prénom :",
-        "ask_age":           "🎂 Âge :",
-        "ask_height":        "📏 Taille (cm) :",
-        "ask_weight":        "⚖️ Poids (kg) :",
-        "ask_measurements":  "📐 Mensurations (ex: 90-60-90) :",
-        "ask_nationality":   "🌍 Nationalité :",
-        "ask_languages":     "🗣 Langues parlées :",
-        "ask_incall":        "🏠 Incall / Outcall ?",
-        "ask_price_1h":      "💶 Prix 1h (€) :",
-        "ask_price_2h":      "💶 Prix 2h (€) :",
-        "ask_price_night":   "💶 Prix nuit (€) :",
-        "ask_contact":       "📞 Contact (Telegram @username ou téléphone) :",
-        "ask_photos":        f"📸 Envoyez vos photos (max {MAX_PHOTOS})\nQuand vous avez terminé → /done",
-        "ask_title":         "📝 Titre de l'annonce :",
-        "ask_desc":          "📋 Description :",
-        "tour_who":          "✈️ *En Tour* — vous êtes :",
-        "btn_tour_model":    "👗 Modèle — je pars en tour",
-        "btn_tour_host":     "🏨 J'accueille des modèles",
-        "ask_tour_from":     "🛫 Votre ville de départ :",
-        "ask_tour_region":   "📍 Région de destination :",
-        "ask_tour_city":     "🏙 Ville de destination :",
-        "ask_tour_from_date":"📅 Date d'arrivée (ex: 15.04) :",
-        "ask_tour_to_date":  "📅 Date de départ (ex: 20.04) :",
-        "ask_tour_notes":    "📝 Notes (tarifs, conditions) — /skip pour passer :",
-        "sent_moderation":   "✅ *Envoyé en modération !*\nNous vous répondrons sous 24h.",
-        "no_ads":            "😔 Aucune annonce pour l'instant.",
-        "end_ads":           "— Fin des annonces —",
-        "type_model":        "👗 Modèles",
-        "type_tour":         "✈️ En Tour",
-        "type_ad":           "📢 Annonces",
-        "btn_contact":       "💬 Contacter",
-        "btn_fav":           "❤️ Favoris",
-        "vip_badge":         "⭐️ VIP",
+        "sent_moderation": "✅ *Envoyé en modération !*\nNous vous répondrons sous 24h.",
+        "no_ads":        "😔 Aucune annonce pour l'instant.",
+        "end_ads":       "— Fin des annonces —",
+        "btn_contact":   "💬 Contacter",
+        "btn_fav":       "❤️ Favoris",
+        "vip_badge":     "⭐️ VIP",
+        "btn_tour_model": "👗 Modèle — je pars en tour",
+        "btn_tour_host":  "🏨 J'accueille des modèles",
     },
     "en": {
         "welcome": (
@@ -177,13 +132,13 @@ T = {
             "and professionals in France 🇫🇷\n\n"
             "What would you like to do?"
         ),
-        "choose_lang":   "🌍 Choose your language:",
         "btn_browse":    "🔍  Browse listings",
         "btn_model":     "👗  Post my profile",
         "btn_tour":      "✈️  On Tour",
         "btn_ad":        "📢  Post an ad",
         "btn_site":      "🌐  Open website",
-        "btn_support":   "💬  Support",
+        "btn_support":   "💬  Support — @loveparis777",
+        "btn_agency":    "🌟  Agency — @VModls",
         "btn_admin":     "🔐  Admin Panel",
         "btn_back":      "◀️ Back",
         "btn_cancel":    "✖️ Cancel",
@@ -191,45 +146,18 @@ T = {
         "btn_skip":      "⏭ Skip",
         "choose_region": "📍 Choose a region:",
         "choose_city":   "🏙 Choose a city:",
-        "ask_name":          "👤 First name:",
-        "ask_age":           "🎂 Age:",
-        "ask_height":        "📏 Height (cm):",
-        "ask_weight":        "⚖️ Weight (kg):",
-        "ask_measurements":  "📐 Measurements (e.g. 90-60-90):",
-        "ask_nationality":   "🌍 Nationality:",
-        "ask_languages":     "🗣 Languages spoken:",
-        "ask_incall":        "🏠 Incall / Outcall?",
-        "ask_price_1h":      "💶 Rate 1h (€):",
-        "ask_price_2h":      "💶 Rate 2h (€):",
-        "ask_price_night":   "💶 Overnight rate (€):",
-        "ask_contact":       "📞 Contact (Telegram @username or phone):",
-        "ask_photos":        f"📸 Send your photos (max {MAX_PHOTOS})\nWhen done → /done",
-        "ask_title":         "📝 Ad title:",
-        "ask_desc":          "📋 Description:",
-        "tour_who":          "✈️ *On Tour* — you are:",
-        "btn_tour_model":    "👗 Model — going on tour",
-        "btn_tour_host":     "🏨 I host models",
-        "ask_tour_from":     "🛫 Your departure city:",
-        "ask_tour_region":   "📍 Destination region:",
-        "ask_tour_city":     "🏙 Destination city:",
-        "ask_tour_from_date":"📅 Arrival date (e.g. 15.04):",
-        "ask_tour_to_date":  "📅 Departure date (e.g. 20.04):",
-        "ask_tour_notes":    "📝 Notes (rates, conditions) — /skip to skip:",
-        "sent_moderation":   "✅ *Sent for moderation!*\nWe'll reply within 24h.",
-        "no_ads":            "😔 No listings yet.",
-        "end_ads":           "— End of listings —",
-        "type_model":        "👗 Models",
-        "type_tour":         "✈️ On Tour",
-        "type_ad":           "📢 Ads",
-        "btn_contact":       "💬 Contact",
-        "btn_fav":           "❤️ Favourite",
-        "vip_badge":         "⭐️ VIP",
+        "sent_moderation": "✅ *Sent for moderation!*\nWe'll reply within 24h.",
+        "no_ads":        "😔 No listings yet.",
+        "end_ads":       "— End of listings —",
+        "btn_contact":   "💬 Contact",
+        "btn_fav":       "❤️ Favourite",
+        "vip_badge":     "⭐️ VIP",
+        "btn_tour_model": "👗 Model — going on tour",
+        "btn_tour_host":  "🏨 I host models",
     }
 }
 
-# pending_ads: анкеты до одобрения
 pending_ads = {}
-
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
 def lang(ctx):
@@ -249,75 +177,49 @@ def skip_cancel_kb(ctx):
         InlineKeyboardButton(tx("btn_cancel", ctx), callback_data="go_menu"),
     ]])
 
-def incall_kb(ctx):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏠 Incall", callback_data="incall_in"),
-         InlineKeyboardButton("🚗 Outcall", callback_data="incall_out")],
-        [InlineKeyboardButton("🏠🚗 Les deux / Both", callback_data="incall_both")],
-        [InlineKeyboardButton(tx("btn_cancel", ctx), callback_data="go_menu")],
-    ])
+def validate_phone(phone):
+    """Проверяет что номер телефона правильный."""
+    cleaned = re.sub(r'[\s\-\(\)]', '', phone)
+    if cleaned.startswith('+') and len(cleaned) >= 10:
+        return True
+    if cleaned.startswith('0') and len(cleaned) >= 9:
+        return True
+    return False
 
+def validate_age(age_str):
+    try:
+        age = int(age_str)
+        return 18 <= age <= 65
+    except:
+        return False
 
-# ─── УВЕДОМЛЕНИЕ АДМИНУ (РУССКИЙ) ─────────────────────────────────────────────
-def build_admin_notification(ad, source="бот"):
-    """Строим красивое уведомление на русском для админа."""
-    flow = ad.get("type", ad.get("flow", "model"))
+def validate_height(h_str):
+    try:
+        h = int(h_str)
+        return 140 <= h <= 200
+    except:
+        return False
 
-    type_labels = {
-        "model": "👗 Профиль модели",
-        "tour":  "✈️ Тур",
-        "ad":    "📢 Объявление",
-    }
-    type_label = type_labels.get(flow, "📋 Анкета")
+def validate_weight(w_str):
+    try:
+        w = int(w_str)
+        return 40 <= w <= 120
+    except:
+        return False
 
-    lines = [
-        f"🔔 *НОВАЯ ЗАЯВКА НА МОДЕРАЦИЮ*",
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        f"📌 Тип: {type_label}",
-        f"📍 Город: {ad.get('city', '—')}",
-        f"👤 Имя: {ad.get('name', '—')}",
-        f"🎂 Возраст: {ad.get('age', '—')}",
-    ]
-
-    if flow == "model":
-        lines += [
-            f"📏 Рост: {ad.get('height', '—')} см",
-            f"⚖️ Вес: {ad.get('weight', '—')} кг",
-            f"📐 Параметры: {ad.get('measurements', '—')}",
-            f"🌍 Нац.: {ad.get('nationality', '—')}",
-            f"🗣 Языки: {ad.get('languages', '—')}",
-            f"🏠 {ad.get('incall', '—')}",
-            f"💶 1ч: {ad.get('price_1h', '—')}€ | 2ч: {ad.get('price_2h', '—')}€ | Ночь: {ad.get('price_night', '—')}€",
-        ]
-    elif flow == "tour":
-        lines += [
-            f"🛫 Откуда: {ad.get('tour_from', '—')}",
-            f"📅 Даты: {ad.get('tour_date_from', '—')} → {ad.get('tour_date_to', '—')}",
-            f"📝 Заметки: {ad.get('tour_notes', '—')}",
-        ]
-    else:
-        lines += [
-            f"📝 Заголовок: {ad.get('ad_title', '—')}",
-            f"📋 Описание: {ad.get('ad_desc', '—')}",
-        ]
-
-    lines += [
-        f"📞 Контакт: {ad.get('contact', '—')}",
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        f"📥 Источник: {source}",
-    ]
-
-    return "\n".join(lines)
-
-def moderation_kb(ad_key):
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Одобрить", callback_data=f"mod_approve_{ad_key}"),
-            InlineKeyboardButton("❌ Отклонить", callback_data=f"mod_reject_{ad_key}"),
-        ],
-        [InlineKeyboardButton("⭐️ Одобрить как VIP", callback_data=f"mod_vip_{ad_key}")],
-    ])
-
+def parse_prices(text):
+    """Парсит цены из текста. Ожидает числа в определённом порядке."""
+    lines = [l.strip() for l in text.strip().split('\n') if l.strip()]
+    slots = ['15min','20min','30min','45min','1h','1h30','2h','3h','soiree','nuit']
+    prices = {}
+    for i, line in enumerate(lines):
+        if i >= len(slots):
+            break
+        # Извлекаем только число из строки
+        nums = re.findall(r'\d+', line)
+        if nums:
+            prices[slots[i]] = nums[0] + '€'
+    return prices
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
 def init_db():
@@ -325,14 +227,15 @@ def init_db():
     c = conn.cursor()
     c.execute("""CREATE TABLE IF NOT EXISTS annonces (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT,
-        region TEXT, city TEXT,
+        type TEXT, region TEXT, city TEXT,
         name TEXT, age TEXT,
         height TEXT, weight TEXT, measurements TEXT,
         nationality TEXT, languages TEXT, incall TEXT,
-        price_1h TEXT, price_2h TEXT, price_night TEXT,
-        contact TEXT,
-        photos TEXT,
+        price_15min TEXT, price_20min TEXT, price_30min TEXT,
+        price_45min TEXT, price_1h TEXT, price_1h30 TEXT,
+        price_2h TEXT, price_3h TEXT, price_soiree TEXT, price_nuit TEXT,
+        hair TEXT, availability TEXT, description TEXT,
+        contact TEXT, photos TEXT,
         ad_title TEXT, ad_desc TEXT,
         tour_who TEXT, tour_from TEXT,
         tour_date_from TEXT, tour_date_to TEXT, tour_notes TEXT,
@@ -342,16 +245,29 @@ def init_db():
         expires_at TIMESTAMP,
         source TEXT DEFAULT 'bot'
     )""")
-    # Добавляем колонку source если её нет (для старых БД)
-    try:
-        c.execute("ALTER TABLE annonces ADD COLUMN source TEXT DEFAULT 'bot'")
-    except Exception:
-        pass
-    c.execute("""CREATE TABLE IF NOT EXISTS favorites (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER, ad_id INTEGER,
-        UNIQUE(user_id, ad_id)
-    )""")
+    # Миграции для старых БД
+    migrations = [
+        "ALTER TABLE annonces ADD COLUMN price_15min TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_20min TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_30min TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_45min TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_1h TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_1h30 TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_2h TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_3h TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_soiree TEXT",
+        "ALTER TABLE annonces ADD COLUMN price_nuit TEXT",
+        "ALTER TABLE annonces ADD COLUMN hair TEXT",
+        "ALTER TABLE annonces ADD COLUMN availability TEXT",
+        "ALTER TABLE annonces ADD COLUMN description TEXT",
+        "ALTER TABLE annonces ADD COLUMN expires_at TIMESTAMP",
+        "ALTER TABLE annonces ADD COLUMN source TEXT DEFAULT 'bot'",
+    ]
+    for m in migrations:
+        try:
+            c.execute(m)
+        except Exception:
+            pass
     conn.commit()
     conn.close()
 
@@ -359,19 +275,29 @@ def save_ad(ad, is_vip=False):
     conn = sqlite3.connect("annonces.db")
     c = conn.cursor()
     expires = (datetime.now() + timedelta(days=30)).isoformat()
+    prices = ad.get('prices', {})
     c.execute("""INSERT INTO annonces
         (type,region,city,name,age,height,weight,measurements,
-        nationality,languages,incall,price_1h,price_2h,price_night,
+        nationality,languages,incall,
+        price_15min,price_20min,price_30min,price_45min,
+        price_1h,price_1h30,price_2h,price_3h,price_soiree,price_nuit,
+        hair,availability,description,
         contact,photos,ad_title,ad_desc,
         tour_who,tour_from,tour_date_from,tour_date_to,tour_notes,
         is_vip,user_id,expires_at,source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             ad.get("type","model"), ad.get("region","-"), ad.get("city","-"),
             ad.get("name","-"), ad.get("age","-"),
             ad.get("height","-"), ad.get("weight","-"), ad.get("measurements","-"),
             ad.get("nationality","-"), ad.get("languages","-"), ad.get("incall","-"),
-            ad.get("price_1h","-"), ad.get("price_2h","-"), ad.get("price_night","-"),
+            prices.get("15min","-"), prices.get("20min","-"),
+            prices.get("30min","-"), prices.get("45min","-"),
+            prices.get("1h","-"), prices.get("1h30","-"),
+            prices.get("2h","-"), prices.get("3h","-"),
+            prices.get("soiree","-"), prices.get("nuit","-"),
+            ad.get("hair","-"), ad.get("availability","-"),
+            ad.get("description","-"),
             ad.get("contact","-"),
             ",".join(ad.get("photos", [])),
             ad.get("ad_title","-"), ad.get("ad_desc","-"),
@@ -381,7 +307,7 @@ def save_ad(ad, is_vip=False):
             1 if is_vip else 0,
             ad.get("user_id"),
             expires,
-            ad.get("source", "bot"),
+            ad.get("source","bot"),
         )
     )
     ad_id = c.lastrowid
@@ -453,7 +379,7 @@ def get_db_stats():
         except Exception:
             from_site = 0
     except Exception:
-        c.execute("SELECT COUNT(*) FROM annonces", )
+        c.execute("SELECT COUNT(*) FROM annonces")
         total = c.fetchone()[0]
         c.execute("SELECT COUNT(*) FROM annonces WHERE is_vip=1")
         vip = c.fetchone()[0]
@@ -479,7 +405,8 @@ def main_menu_kb(ctx, user_id=None):
         ],
         [InlineKeyboardButton(tx("btn_ad", ctx), callback_data="go_ad")],
         [InlineKeyboardButton(tx("btn_site", ctx), url=MINIAPP_URL)],
-        [InlineKeyboardButton(tx("btn_support", ctx), url="https://t.me/amourannonce_tour")],
+        [InlineKeyboardButton(tx("btn_support", ctx), url=SUPPORT_URL)],
+        [InlineKeyboardButton(tx("btn_agency", ctx), url=VMODLS_URL)],
     ]
     if user_id == ADMIN_ID:
         rows.append([InlineKeyboardButton(tx("btn_admin", ctx), callback_data="go_admin")])
@@ -492,8 +419,7 @@ def region_kb(ctx, prefix):
         row = []
         for j in range(2):
             if i+j < len(keys):
-                row.append(InlineKeyboardButton(
-                    keys[i+j], callback_data=f"{prefix}_r_{i+j}"))
+                row.append(InlineKeyboardButton(keys[i+j], callback_data=f"{prefix}_r_{i+j}"))
         kb.append(row)
     kb.append([InlineKeyboardButton(tx("btn_back", ctx), callback_data="go_menu")])
     return InlineKeyboardMarkup(kb)
@@ -512,6 +438,72 @@ def city_kb(ctx, region_name, prefix):
     kb.append([InlineKeyboardButton(tx("btn_back", ctx), callback_data=f"{prefix}_back_region")])
     return InlineKeyboardMarkup(kb)
 
+def hair_kb(ctx):
+    l = lang(ctx)
+    fr = l == "fr"
+    options = [
+        ("👱 Blonde", "hair_blonde"),
+        ("🟤 Brune", "hair_brune"),
+        ("🔴 Rousse", "hair_rousse"),
+        ("⬛ Noire", "hair_noire"),
+        ("🌰 Châtain", "hair_chatain"),
+        ("🎨 Colorée", "hair_coloree"),
+        ("✂️ Courte", "hair_courte"),
+    ]
+    kb = []
+    row = []
+    for label, data in options:
+        row.append(InlineKeyboardButton(label, callback_data=data))
+        if len(row) == 2:
+            kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton(tx("btn_cancel", ctx), callback_data="go_menu")])
+    return InlineKeyboardMarkup(kb)
+
+def incall_kb(ctx):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏠 Incall uniquement", callback_data="incall_in")],
+        [InlineKeyboardButton("🚗 Outcall uniquement", callback_data="incall_out")],
+        [InlineKeyboardButton("🏠🚗 Incall + Outcall", callback_data="incall_both")],
+        [InlineKeyboardButton(tx("btn_cancel", ctx), callback_data="go_menu")],
+    ])
+
+def languages_kb(ctx):
+    options = [
+        ("🇫🇷 Français", "lang_fr"), ("🇬🇧 Anglais", "lang_en"),
+        ("🇷🇺 Russe", "lang_ru"), ("🇪🇸 Espagnol", "lang_es"),
+        ("🇮🇹 Italien", "lang_it"), ("🇩🇪 Allemand", "lang_de"),
+        ("🇵🇹 Portugais", "lang_pt"), ("🇸🇦 Arabe", "lang_ar"),
+        ("🇺🇦 Ukrainien", "lang_uk"), ("🇯🇵 Japonais", "lang_jp"),
+    ]
+    kb = []
+    row = []
+    for label, data in options:
+        row.append(InlineKeyboardButton(label, callback_data=data))
+        if len(row) == 2:
+            kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
+    kb.append([
+        InlineKeyboardButton("✅ Confirmer", callback_data="langs_done"),
+        InlineKeyboardButton(tx("btn_cancel", ctx), callback_data="go_menu"),
+    ])
+    return InlineKeyboardMarkup(kb)
+
+def availability_kb(ctx):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🕐 24h/24", callback_data="avail_24h")],
+        [InlineKeyboardButton("☀️ En journée", callback_data="avail_day"),
+         InlineKeyboardButton("🌙 En soirée", callback_data="avail_evening")],
+        [InlineKeyboardButton("🌃 Nuits uniquement", callback_data="avail_night")],
+        [InlineKeyboardButton("📅 Weekends", callback_data="avail_weekend"),
+         InlineKeyboardButton("📞 Sur rendez-vous", callback_data="avail_rdv")],
+        [InlineKeyboardButton(tx("btn_cancel", ctx), callback_data="go_menu")],
+    ])
+
 def browse_type_kb(ctx):
     l = lang(ctx)
     return InlineKeyboardMarkup([
@@ -528,9 +520,19 @@ def ad_action_kb(ad_id, contact, ctx):
         InlineKeyboardButton(tx("btn_contact", ctx), url=f"https://t.me/{contact_clean}"),
     ]])
 
+def moderation_kb(ad_key):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Одобрить", callback_data=f"mod_approve_{ad_key}"),
+            InlineKeyboardButton("❌ Отклонить", callback_data=f"mod_reject_{ad_key}"),
+        ],
+        [InlineKeyboardButton("⭐️ Одобрить как VIP", callback_data=f"mod_vip_{ad_key}")],
+    ])
+
 def admin_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Ожидают модерации", callback_data="adm_pending")],
+        [InlineKeyboardButton("➕ Добавить анкету", callback_data="adm_add")],
         [InlineKeyboardButton("📊 Статистика", callback_data="adm_stats")],
         [InlineKeyboardButton("🗂 Все анкеты", callback_data="adm_all")],
         [InlineKeyboardButton("◀️ Главное меню", callback_data="go_menu")],
@@ -546,33 +548,95 @@ def admin_ad_kb(ad_id):
     ])
 
 
+# ─── УВЕДОМЛЕНИЕ АДМИНУ ───────────────────────────────────────────────────────
+def build_admin_notification(ad, source="бот"):
+    flow = ad.get("type", ad.get("flow", "model"))
+    type_labels = {"model": "👗 Профиль модели", "tour": "✈️ Тур", "ad": "📢 Объявление"}
+    type_label = type_labels.get(flow, "📋 Анкета")
+    prices = ad.get("prices", {})
+
+    lines = [
+        f"🔔 *НОВАЯ ЗАЯВКА НА МОДЕРАЦИЮ*",
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+        f"📌 Тип: {type_label}",
+        f"📍 Город: {ad.get('city', '—')}",
+        f"👤 Имя: {ad.get('name', '—')}",
+        f"🎂 Возраст: {ad.get('age', '—')}",
+    ]
+
+    if flow == "model":
+        lines += [
+            f"🌍 Нац.: {ad.get('nationality', '—')}",
+            f"📏 Рост: {ad.get('height', '—')} см  ⚖️ Вес: {ad.get('weight', '—')} кг",
+            f"📐 Параметры: {ad.get('measurements', '—')}",
+            f"💇 Волосы: {ad.get('hair', '—')}",
+            f"🗣 Языки: {ad.get('languages', '—')}",
+            f"🏠 {ad.get('incall', '—')}",
+            f"🕐 Доступность: {ad.get('availability', '—')}",
+        ]
+        if prices:
+            price_lines = []
+            for slot, val in prices.items():
+                if val and val != '-':
+                    price_lines.append(f"{slot}: {val}")
+            if price_lines:
+                lines.append(f"💶 Тарифы: {' | '.join(price_lines)}")
+        if ad.get('description'):
+            lines.append(f"📝 О себе: {ad.get('description', '—')}")
+    elif flow == "tour":
+        lines += [
+            f"🛫 Откуда: {ad.get('tour_from', '—')}",
+            f"📅 Даты: {ad.get('tour_date_from', '—')} → {ad.get('tour_date_to', '—')}",
+            f"📝 Заметки: {ad.get('tour_notes', '—')}",
+        ]
+    else:
+        lines += [
+            f"📝 Заголовок: {ad.get('ad_title', '—')}",
+            f"📋 Описание: {ad.get('ad_desc', '—')}",
+        ]
+
+    lines += [
+        f"📞 Контакт: {ad.get('contact', '—')}",
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+        f"📥 Источник: {source}",
+    ]
+
+    return "\n".join(lines)
+
+
 # ─── FORMAT AD ────────────────────────────────────────────────────────────────
 def format_ad(row, ctx):
-    type_   = row[1]
-    region  = row[2]
-    city    = row[3]
-    name    = row[4]
-    age     = row[5]
-    height  = row[6]
-    weight  = row[7]
-    measurements = row[8]
-    nationality  = row[9]
-    languages    = row[10]
-    incall       = row[11]
-    price_1h     = row[12]
-    price_2h     = row[13]
-    price_night  = row[14]
-    contact      = row[15]
-    tour_who     = row[19]
-    tour_from    = row[20]
-    tour_date_from = row[21]
-    tour_date_to   = row[22]
-    tour_notes     = row[23]
-    is_vip         = row[24]
-    ad_title       = row[17]
-    ad_desc        = row[18]
+    try:
+        type_   = row[1]
+        city    = row[3]
+        name    = row[4]
+        age     = row[5]
+        height  = row[6]
+        weight  = row[7]
+        measurements = row[8]
+        nationality  = row[9]
+        languages    = row[10]
+        incall       = row[11]
+        # Новая схема: цены начиная с колонки 12
+        contact  = row[25] if len(row) > 25 else row[15]
+        tour_who = row[29] if len(row) > 29 else "-"
+        tour_from = row[30] if len(row) > 30 else "-"
+        tour_date_from = row[31] if len(row) > 31 else "-"
+        tour_date_to = row[32] if len(row) > 32 else "-"
+        tour_notes = row[33] if len(row) > 33 else "-"
+        is_vip = row[34] if len(row) > 34 else 0
+        ad_title = row[27] if len(row) > 27 else "-"
+        ad_desc = row[28] if len(row) > 28 else "-"
+        description = row[24] if len(row) > 24 else "-"
+        hair = row[21] if len(row) > 21 else "-"
+        availability = row[22] if len(row) > 22 else "-"
+        # Цены
+        price_1h = row[16] if len(row) > 16 else "-"
+        price_nuit = row[21] if len(row) > 21 else "-"
+    except Exception:
+        return "Ошибка отображения анкеты"
 
-    vip = f"{tx('vip_badge', ctx)} | " if is_vip else ""
+    vip = "⭐️ VIP | " if is_vip else ""
 
     if type_ == "model":
         lines = [
@@ -581,19 +645,18 @@ def format_ad(row, ctx):
             f"📏 {height} cm  ⚖️ {weight} kg  📐 {measurements}",
             f"🌍 {nationality}  🗣 {languages}",
             f"🏠 {incall}",
-            f"💶 1h: *{price_1h}€*  |  2h: *{price_2h}€*  |  Nuit: *{price_night}€*",
-            f"📞 {contact}",
         ]
+        if price_1h and price_1h != "-":
+            lines.append(f"💶 1h: *{price_1h}*")
+        if description and description != "-":
+            lines.append(f"📝 {description}")
+        lines.append(f"📞 {contact}")
     elif type_ == "tour":
         who_label = "👗 Modèle" if tour_who == "model" else "🏨 Hôte"
         lines = [
             f"{vip}✈️ *En Tour* — {who_label}",
             f"━━━━━━━━━━━━━━━━━━━━━━",
             f"📍 {city}",
-        ]
-        if tour_who == "model":
-            lines.append(f"🛫 Depuis: {tour_from}")
-        lines += [
             f"📅 {tour_date_from} → {tour_date_to}",
             f"👤 {name}",
         ]
@@ -717,21 +780,18 @@ async def browse_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(f"📍 *{city}* — {len(ads)} annonce(s)", parse_mode="Markdown")
     for row in ads:
         caption = format_ad(row, context)
-        photos_str = row[16]
+        photos_str = row[26] if len(row) > 26 else ""
         photos = [p for p in photos_str.split(",") if p] if photos_str else []
         ad_id = row[0]
-        contact = row[15]
+        contact = row[25] if len(row) > 25 else "-"
         try:
             if photos:
                 await q.message.reply_photo(photo=photos[0], caption=caption, parse_mode="Markdown")
-                if len(photos) > 1:
-                    media = [InputMediaPhoto(media=p) for p in photos[1:min(len(photos), MAX_PHOTOS)]]
-                    await q.message.reply_media_group(media=media)
             else:
                 await q.message.reply_text(caption, parse_mode="Markdown")
             await q.message.reply_text("⬆️", reply_markup=ad_action_kb(ad_id, contact, context))
         except Exception as e:
-            logger.error(f"Ошибка отправки анкеты {ad_id}: {e}")
+            logger.error(f"Ошибка: {e}")
             await q.message.reply_text(caption, parse_mode="Markdown")
     await q.message.reply_text(
         tx("end_ads", context),
@@ -748,7 +808,13 @@ async def go_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     context.user_data["flow"] = "model"
-    await q.edit_message_text(tx("choose_region", context), reply_markup=region_kb(context, "m"))
+    context.user_data["selected_langs"] = []
+    await q.edit_message_text(
+        "👗 *Déposer mon profil*\n\n"
+        "📍 Étape 1/15 — Choisissez votre région :",
+        parse_mode="Markdown",
+        reply_markup=region_kb(context, "m")
+    )
     return M_REGION
 
 async def model_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -758,7 +824,7 @@ async def model_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
     region = list(REGIONS.keys())[idx]
     context.user_data["region"] = region
     await q.edit_message_text(
-        f"{region}\n\n{tx('choose_city', context)}",
+        f"📍 Étape 1/15 — {region}\n\nChoisissez votre ville :",
         reply_markup=city_kb(context, region, "m")
     )
     return M_CITY
@@ -771,74 +837,322 @@ async def model_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     city = q.data.replace("m_c_", "")
     context.user_data["city"] = city
     await q.edit_message_text(
-        f"📍 *{city}*\n\n{tx('ask_name', context)}",
+        f"✅ Ville: *{city}*\n\n"
+        f"👤 Étape 2/15 — Votre prénom :\n\n"
+        f"_Exemple: Sofia, Marie, Anna..._",
         parse_mode="Markdown",
         reply_markup=cancel_kb(context)
     )
     return M_NAME
 
 async def model_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["name"] = update.message.text
-    await update.message.reply_text(tx("ask_age", context), reply_markup=cancel_kb(context))
+    name = update.message.text.strip()
+    if len(name) < 2 or len(name) > 30:
+        await update.message.reply_text(
+            "⚠️ Le prénom doit contenir entre 2 et 30 caractères.\n_Exemple: Sofia_",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_NAME
+    context.user_data["name"] = name
+    await update.message.reply_text(
+        f"✅ Prénom: *{name}*\n\n"
+        f"🎂 Étape 3/15 — Votre âge :\n\n"
+        f"_Entrez un nombre entre 18 et 65 (ex: 25)_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return M_AGE
 
 async def model_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["age"] = update.message.text
-    await update.message.reply_text(tx("ask_height", context), reply_markup=cancel_kb(context))
-    return M_HEIGHT
-
-async def model_height(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["height"] = update.message.text
-    await update.message.reply_text(tx("ask_weight", context), reply_markup=cancel_kb(context))
-    return M_WEIGHT
-
-async def model_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["weight"] = update.message.text
-    await update.message.reply_text(tx("ask_measurements", context), reply_markup=cancel_kb(context))
-    return M_MEASUREMENTS
-
-async def model_measurements(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["measurements"] = update.message.text
-    await update.message.reply_text(tx("ask_nationality", context), reply_markup=cancel_kb(context))
+    age_str = update.message.text.strip()
+    if not validate_age(age_str):
+        await update.message.reply_text(
+            "⚠️ Âge invalide. Entrez un nombre entre 18 et 65.\n_Exemple: 25_",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_AGE
+    context.user_data["age"] = age_str
+    await update.message.reply_text(
+        f"✅ Âge: *{age_str} ans*\n\n"
+        f"🌍 Étape 4/15 — Votre nationalité :\n\n"
+        f"_Exemple: Ukrainienne, Russe, Française, Brésilienne..._",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return M_NATIONALITY
 
 async def model_nationality(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["nationality"] = update.message.text
-    await update.message.reply_text(tx("ask_languages", context), reply_markup=cancel_kb(context))
-    return M_LANGUAGES
+    nat = update.message.text.strip()
+    if len(nat) < 2:
+        await update.message.reply_text(
+            "⚠️ Veuillez entrer votre nationalité.\n_Exemple: Ukrainienne_",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_NATIONALITY
+    context.user_data["nationality"] = nat
+    await update.message.reply_text(
+        f"✅ Nationalité: *{nat}*\n\n"
+        f"📏 Étape 5/15 — Votre taille en cm :\n\n"
+        f"_Entrez un nombre entre 140 et 200 (ex: 168)_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
+    return M_HEIGHT
 
-async def model_languages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["languages"] = update.message.text
-    await update.message.reply_text(tx("ask_incall", context), reply_markup=incall_kb(context))
+async def model_height(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    h = update.message.text.strip()
+    if not validate_height(h):
+        await update.message.reply_text(
+            "⚠️ Taille invalide. Entrez un nombre entre 140 et 200.\n_Exemple: 168_",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_HEIGHT
+    context.user_data["height"] = h
+    await update.message.reply_text(
+        f"✅ Taille: *{h} cm*\n\n"
+        f"⚖️ Étape 6/15 — Votre poids en kg :\n\n"
+        f"_Entrez un nombre entre 40 et 120 (ex: 55)_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
+    return M_WEIGHT
+
+async def model_weight(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    w = update.message.text.strip()
+    if not validate_weight(w):
+        await update.message.reply_text(
+            "⚠️ Poids invalide. Entrez un nombre entre 40 et 120.\n_Exemple: 55_",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_WEIGHT
+    context.user_data["weight"] = w
+    await update.message.reply_text(
+        f"✅ Poids: *{w} kg*\n\n"
+        f"📐 Étape 7/15 — Vos mensurations :\n\n"
+        f"_Format: Bonnet — Taille — Hanches_\n"
+        f"_Exemple: 90C — 60 — 90_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
+    return M_MEASUREMENTS
+
+async def model_measurements(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    m = update.message.text.strip()
+    if len(m) < 3:
+        await update.message.reply_text(
+            "⚠️ Format invalide.\n_Exemple: 90C — 60 — 90_",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_MEASUREMENTS
+    context.user_data["measurements"] = m
+    await update.message.reply_text(
+        f"✅ Mensurations: *{m}*\n\n"
+        f"💇 Étape 8/15 — Couleur de cheveux :",
+        parse_mode="Markdown",
+        reply_markup=hair_kb(context)
+    )
+    return M_HAIR
+
+async def model_hair(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    hair_map = {
+        "hair_blonde": "Blonde", "hair_brune": "Brune",
+        "hair_rousse": "Rousse", "hair_noire": "Noire",
+        "hair_chatain": "Châtain", "hair_coloree": "Colorée",
+        "hair_courte": "Courte",
+    }
+    hair = hair_map.get(q.data, "Autre")
+    context.user_data["hair"] = hair
+    await q.edit_message_text(
+        f"✅ Cheveux: *{hair}*\n\n"
+        f"🏠 Étape 9/15 — Type de service :",
+        parse_mode="Markdown",
+        reply_markup=incall_kb(context)
+    )
     return M_INCALL
 
 async def model_incall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    mapping = {"incall_in": "Incall", "incall_out": "Outcall", "incall_both": "Incall + Outcall"}
-    context.user_data["incall"] = mapping.get(q.data, "-")
-    await q.edit_message_text(tx("ask_price_1h", context), reply_markup=cancel_kb(context))
-    return M_PRICE_1H
+    mapping = {
+        "incall_in": "Incall uniquement",
+        "incall_out": "Outcall uniquement",
+        "incall_both": "Incall + Outcall"
+    }
+    incall = mapping.get(q.data, "-")
+    context.user_data["incall"] = incall
+    # Инициализируем список языков
+    context.user_data["selected_langs"] = []
+    await q.edit_message_text(
+        f"✅ Service: *{incall}*\n\n"
+        f"🗣 Étape 10/15 — Langues parlées :\n\n"
+        f"_Sélectionnez une ou plusieurs langues, puis appuyez sur ✅ Confirmer_",
+        parse_mode="Markdown",
+        reply_markup=languages_kb(context)
+    )
+    return M_LANGUAGES
 
-async def model_price_1h(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["price_1h"] = update.message.text
-    await update.message.reply_text(tx("ask_price_2h", context), reply_markup=cancel_kb(context))
-    return M_PRICE_2H
+async def model_languages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
 
-async def model_price_2h(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["price_2h"] = update.message.text
-    await update.message.reply_text(tx("ask_price_night", context), reply_markup=cancel_kb(context))
-    return M_PRICE_NIGHT
+    lang_map = {
+        "lang_fr": "Français", "lang_en": "Anglais",
+        "lang_ru": "Russe", "lang_es": "Espagnol",
+        "lang_it": "Italien", "lang_de": "Allemand",
+        "lang_pt": "Portugais", "lang_ar": "Arabe",
+        "lang_uk": "Ukrainien", "lang_jp": "Japonais",
+    }
 
-async def model_price_night(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["price_night"] = update.message.text
-    await update.message.reply_text(tx("ask_contact", context), reply_markup=cancel_kb(context))
+    if q.data == "langs_done":
+        selected = context.user_data.get("selected_langs", [])
+        if not selected:
+            await q.answer("⚠️ Sélectionnez au moins une langue!", show_alert=True)
+            return M_LANGUAGES
+        langs_str = ", ".join(selected)
+        context.user_data["languages"] = langs_str
+        await q.edit_message_text(
+            f"✅ Langues: *{langs_str}*\n\n"
+            f"🕐 Étape 11/15 — Vos disponibilités :",
+            parse_mode="Markdown",
+            reply_markup=availability_kb(context)
+        )
+        return M_AVAILABILITY
+
+    if q.data in lang_map:
+        selected = context.user_data.get("selected_langs", [])
+        lang_name = lang_map[q.data]
+        if lang_name in selected:
+            selected.remove(lang_name)
+        else:
+            selected.append(lang_name)
+        context.user_data["selected_langs"] = selected
+        selected_str = ", ".join(selected) if selected else "Aucune"
+        await q.answer(f"✅ Sélection: {selected_str}")
+    return M_LANGUAGES
+
+async def model_availability(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    avail_map = {
+        "avail_24h": "24h/24",
+        "avail_day": "En journée",
+        "avail_evening": "En soirée",
+        "avail_night": "Nuits uniquement",
+        "avail_weekend": "Weekends",
+        "avail_rdv": "Sur rendez-vous",
+    }
+    avail = avail_map.get(q.data, "-")
+    context.user_data["availability"] = avail
+    await q.edit_message_text(
+        f"✅ Disponibilités: *{avail}*\n\n"
+        f"💶 Étape 12/15 — Vos tarifs :\n\n"
+        f"Entrez vos prix *ligne par ligne* (uniquement les chiffres) :\n\n"
+        f"```\n"
+        f"15min: 80\n"
+        f"20min: 100\n"
+        f"30min: 150\n"
+        f"45min: 200\n"
+        f"1h: 300\n"
+        f"1h30: 420\n"
+        f"2h: 550\n"
+        f"3h: 750\n"
+        f"Soirée: 1200\n"
+        f"Nuit: 1800\n"
+        f"```\n"
+        f"_Laissez 0 si vous n'offrez pas ce créneau._",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
+    return M_PRICES
+
+async def model_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    prices = parse_prices(text)
+
+    if not prices or not any(v != '0' for v in prices.values()):
+        await update.message.reply_text(
+            "⚠️ Format invalide. Entrez les prix ligne par ligne:\n\n"
+            "```\n15min: 80\n20min: 100\n30min: 150\n45min: 200\n"
+            "1h: 300\n1h30: 420\n2h: 550\n3h: 750\nSoirée: 1200\nNuit: 1800\n```\n"
+            "_Entrez 0 si vous n'offrez pas ce créneau._",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_PRICES
+
+    context.user_data["prices"] = prices
+    price_summary = "\n".join([f"• {k}: {v}" for k, v in prices.items() if v and v != '0'])
+    await update.message.reply_text(
+        f"✅ Tarifs enregistrés:\n{price_summary}\n\n"
+        f"📝 Étape 13/15 — Description (à propos de vous) :\n\n"
+        f"_Exemple: Douce et élégante, je reçois dans un appartement discret..._\n"
+        f"_Minimum 20 caractères._",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
+    return M_DESCRIPTION
+
+async def model_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    desc = update.message.text.strip()
+    if len(desc) < 20:
+        await update.message.reply_text(
+            "⚠️ Description trop courte. Minimum 20 caractères.\n"
+            "_Exemple: Douce et élégante, je reçois dans un appartement discret et propre..._",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_DESCRIPTION
+    context.user_data["description"] = desc
+    await update.message.reply_text(
+        f"✅ Description enregistrée.\n\n"
+        f"📞 Étape 14/15 — Votre contact :\n\n"
+        f"_Entrez votre Telegram @username OU votre numéro de téléphone_\n\n"
+        f"Exemples:\n"
+        f"• @votre_pseudo\n"
+        f"• +33 6 12 34 56 78\n"
+        f"• +33612345678",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return M_CONTACT
 
 async def model_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["contact"] = update.message.text
+    contact = update.message.text.strip()
+
+    # Валидация — должен быть @username или номер телефона
+    is_tg = contact.startswith("@") and len(contact) > 2
+    is_phone = validate_phone(contact)
+
+    if not is_tg and not is_phone:
+        await update.message.reply_text(
+            "⚠️ Format invalide.\n\n"
+            "Entrez soit:\n"
+            "• Un Telegram: *@votre_pseudo*\n"
+            "• Un téléphone: *+33 6 12 34 56 78*",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return M_CONTACT
+
+    context.user_data["contact"] = contact
     context.user_data["photos"] = []
-    await update.message.reply_text(tx("ask_photos", context), reply_markup=cancel_kb(context))
+    await update.message.reply_text(
+        f"✅ Contact: *{contact}*\n\n"
+        f"📸 Étape 15/15 — Photos :\n\n"
+        f"Envoyez vos photos (max {MAX_PHOTOS})\n"
+        f"_Minimum 1 photo requise._\n\n"
+        f"Quand vous avez terminé → /done",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return M_PHOTOS
 
 
@@ -847,12 +1161,17 @@ async def go_tour(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     context.user_data["flow"] = "tour"
+    l = lang(context)
     await q.edit_message_text(
-        tx("tour_who", context),
+        "✈️ *En Tour*\n\nVous êtes :" if l=="fr" else "✈️ *On Tour*\n\nYou are:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton(tx("btn_tour_model", context), callback_data="tour_who_model")],
             [InlineKeyboardButton(tx("btn_tour_host", context), callback_data="tour_who_host")],
+            [InlineKeyboardButton(
+                "🔍 Je cherche un tour → @loveparis777" if l=="fr" else "🔍 Looking for a tour → @loveparis777",
+                url=SUPPORT_URL
+            )],
             [InlineKeyboardButton(tx("btn_back", context), callback_data="go_menu")],
         ])
     )
@@ -864,15 +1183,25 @@ async def tour_who(update: Update, context: ContextTypes.DEFAULT_TYPE):
     who = q.data.replace("tour_who_", "")
     context.user_data["tour_who"] = who
     if who == "model":
-        await q.edit_message_text(tx("ask_tour_from", context), reply_markup=cancel_kb(context))
+        await q.edit_message_text(
+            "🛫 Votre ville de départ :\n\n_Exemple: Moscou, Kiev, Varsovie..._",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
         return T_FROM_CITY
     else:
-        await q.edit_message_text(tx("ask_tour_region", context), reply_markup=region_kb(context, "t"))
+        await q.edit_message_text(
+            tx("choose_region", context),
+            reply_markup=region_kb(context, "t")
+        )
         return T_TO_REGION
 
 async def tour_from_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["tour_from"] = update.message.text
-    await update.message.reply_text(tx("ask_tour_region", context), reply_markup=region_kb(context, "t"))
+    context.user_data["tour_from"] = update.message.text.strip()
+    await update.message.reply_text(
+        tx("choose_region", context),
+        reply_markup=region_kb(context, "t")
+    )
     return T_TO_REGION
 
 async def tour_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -882,7 +1211,7 @@ async def tour_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
     region = list(REGIONS.keys())[idx]
     context.user_data["region"] = region
     await q.edit_message_text(
-        f"{region}\n\n{tx('ask_tour_city', context)}",
+        f"{region}\n\nChoisissez la ville de destination :",
         reply_markup=city_kb(context, region, "t")
     )
     return T_TO_CITY
@@ -891,36 +1220,74 @@ async def tour_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     if q.data == "t_back_region":
-        await q.edit_message_text(tx("ask_tour_region", context), reply_markup=region_kb(context, "t"))
+        await q.edit_message_text(tx("choose_region", context), reply_markup=region_kb(context, "t"))
         return T_TO_REGION
     city = q.data.replace("t_c_", "")
     context.user_data["city"] = city
-    await q.edit_message_text(tx("ask_tour_from_date", context), reply_markup=cancel_kb(context))
+    await q.edit_message_text(
+        f"✅ Destination: *{city}*\n\n"
+        f"📅 Date d'arrivée :\n\n_Exemple: 15.04 ou 15/04/2026_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return T_DATE_FROM
 
 async def tour_date_from(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["tour_date_from"] = update.message.text
-    await update.message.reply_text(tx("ask_tour_to_date", context), reply_markup=cancel_kb(context))
+    context.user_data["tour_date_from"] = update.message.text.strip()
+    await update.message.reply_text(
+        "📅 Date de départ :\n\n_Exemple: 20.04 ou 20/04/2026_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return T_DATE_TO
 
 async def tour_date_to(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["tour_date_to"] = update.message.text
-    await update.message.reply_text(tx("ask_name", context), reply_markup=cancel_kb(context))
+    context.user_data["tour_date_to"] = update.message.text.strip()
+    await update.message.reply_text(
+        "👤 Votre prénom :\n\n_Exemple: Sofia_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
+    return T_NAME
+
+async def tour_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["name"] = update.message.text.strip()
+    await update.message.reply_text(
+        "📝 Notes (tarifs, conditions, hébergement) :\n\n"
+        "_Exemple: Cherche appartement, tarif 200€/h..._\n\n"
+        "Ou appuyez sur Passer →",
+        parse_mode="Markdown",
+        reply_markup=skip_cancel_kb(context)
+    )
     return T_NOTES
 
 async def tour_notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("name"):
-        context.user_data["name"] = update.message.text
-        await update.message.reply_text(tx("ask_tour_notes", context), reply_markup=skip_cancel_kb(context))
-        return T_NOTES
-    context.user_data["tour_notes"] = update.message.text
-    await update.message.reply_text(tx("ask_contact", context), reply_markup=cancel_kb(context))
+    context.user_data["tour_notes"] = update.message.text.strip()
+    await update.message.reply_text(
+        "📞 Votre contact :\n\n"
+        "_@votre_telegram ou +33 6 12 34 56 78_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return T_CONTACT
 
 async def tour_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["contact"] = update.message.text
+    contact = update.message.text.strip()
+    is_tg = contact.startswith("@") and len(contact) > 2
+    is_phone = validate_phone(contact)
+    if not is_tg and not is_phone:
+        await update.message.reply_text(
+            "⚠️ Format invalide.\n• @pseudo\n• +33 6 12 34 56 78",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return T_CONTACT
+    context.user_data["contact"] = contact
     context.user_data["photos"] = []
-    await update.message.reply_text(tx("ask_photos", context), reply_markup=cancel_kb(context))
+    await update.message.reply_text(
+        f"📸 Photos (max {MAX_PHOTOS}) → /done quand terminé",
+        reply_markup=cancel_kb(context)
+    )
     return T_PHOTOS
 
 
@@ -952,49 +1319,70 @@ async def ad_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     city = q.data.replace("a_c_", "")
     context.user_data["city"] = city
     await q.edit_message_text(
-        f"📍 *{city}*\n\n{tx('ask_title', context)}",
+        f"📝 Titre de l'annonce :\n\n_Exemple: Massage relaxant Paris 8e_",
         parse_mode="Markdown",
         reply_markup=cancel_kb(context)
     )
     return A_TITLE
 
 async def ad_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["ad_title"] = update.message.text
-    await update.message.reply_text(tx("ask_desc", context), reply_markup=cancel_kb(context))
+    context.user_data["ad_title"] = update.message.text.strip()
+    await update.message.reply_text(
+        "📋 Description :\n\n_Décrivez votre service en détail..._",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return A_DESC
 
 async def ad_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["ad_desc"] = update.message.text
-    await update.message.reply_text(tx("ask_contact", context), reply_markup=cancel_kb(context))
+    context.user_data["ad_desc"] = update.message.text.strip()
+    await update.message.reply_text(
+        "📞 Contact :\n\n_@pseudo ou +33 6 12 34 56 78_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return A_CONTACT
 
 async def ad_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["contact"] = update.message.text
+    contact = update.message.text.strip()
+    is_tg = contact.startswith("@") and len(contact) > 2
+    is_phone = validate_phone(contact)
+    if not is_tg and not is_phone:
+        await update.message.reply_text(
+            "⚠️ Format invalide.\n• @pseudo\n• +33 6 12 34 56 78",
+            parse_mode="Markdown",
+            reply_markup=cancel_kb(context)
+        )
+        return A_CONTACT
+    context.user_data["contact"] = contact
     context.user_data["photos"] = []
-    await update.message.reply_text(tx("ask_photos", context), reply_markup=cancel_kb(context))
+    await update.message.reply_text(
+        f"📸 Photos (max {MAX_PHOTOS}) → /done quand terminé",
+        reply_markup=cancel_kb(context)
+    )
     return A_PHOTOS
 
 
-# ─── ФОТО (общие) ─────────────────────────────────────────────────────────────
+# ─── ФОТО ─────────────────────────────────────────────────────────────────────
 async def receive_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photos = context.user_data.get("photos", [])
     if len(photos) >= MAX_PHOTOS:
-        await update.message.reply_text(f"⚠️ Максимум {MAX_PHOTOS} фото. Отправьте /done")
+        await update.message.reply_text(f"⚠️ Maximum {MAX_PHOTOS} photos. Envoyez /done")
         return None
     file_id = update.message.photo[-1].file_id
     photos.append(file_id)
     context.user_data["photos"] = photos
     count = len(photos)
     if count >= MAX_PHOTOS:
-        await update.message.reply_text(f"✅ Фото {count}/{MAX_PHOTOS} — максимум!\nОтправьте /done")
+        await update.message.reply_text(f"✅ Photo {count}/{MAX_PHOTOS} — Maximum! → /done")
     else:
-        await update.message.reply_text(f"✅ Фото {count}/{MAX_PHOTOS} — продолжайте или /done")
+        await update.message.reply_text(f"✅ Photo {count}/{MAX_PHOTOS} — Continuez ou → /done")
     return None
 
 async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photos = context.user_data.get("photos", [])
     if not photos:
-        await update.message.reply_text("⚠️ Отправьте хотя бы одно фото.")
+        await update.message.reply_text("⚠️ Envoyez au moins une photo avant de terminer.")
         return None
 
     user_id = update.effective_user.id
@@ -1006,14 +1394,13 @@ async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pending_ads[ad_key] = dict(context.user_data)
 
-    # Сообщение пользователю
     await update.message.reply_text(
         tx("sent_moderation", context),
         reply_markup=main_menu_kb(context, user_id),
         parse_mode="Markdown"
     )
 
-    # ── Уведомление ТЕБЕ на русском ──
+    # Уведомление админу на русском
     ad = pending_ads[ad_key]
     notification_text = build_admin_notification(ad, source="бот Telegram")
 
@@ -1034,10 +1421,9 @@ async def done_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=notification_text,
                 parse_mode="Markdown"
             )
-        # Кнопки модерации
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"👇 *Выбери действие:*",
+            text="👇 *Выбери действие:*",
             reply_markup=moderation_kb(ad_key),
             parse_mode="Markdown"
         )
@@ -1053,7 +1439,11 @@ async def skip_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     context.user_data["tour_notes"] = "-"
-    await q.edit_message_text(tx("ask_contact", context), reply_markup=cancel_kb(context))
+    await q.edit_message_text(
+        "📞 Contact :\n\n_@pseudo ou +33 6 12 34 56 78_",
+        parse_mode="Markdown",
+        reply_markup=cancel_kb(context)
+    )
     return T_CONTACT
 
 
@@ -1076,7 +1466,6 @@ async def moderation_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "reject":
-        # Уведомляем пользователя об отклонении (если из бота)
         if ad.get("source") == "bot" and ad.get("user_id"):
             try:
                 l = ad.get("lang", "fr")
@@ -1092,7 +1481,6 @@ async def moderation_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ad_id = save_ad(ad, is_vip)
     await publish_to_channel(context, ad, is_vip)
 
-    # Уведомляем пользователя об одобрении (если из бота)
     if ad.get("source") == "bot" and ad.get("user_id"):
         try:
             l = ad.get("lang", "fr")
@@ -1106,10 +1494,9 @@ async def moderation_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     del pending_ads[ad_key]
-    status = "⭐️ VIP" if is_vip else "обычная"
+    status = "⭐️ VIP" if is_vip else "standard"
     await q.edit_message_text(
-        f"✅ *Анкета одобрена и опубликована!*\n"
-        f"🆔 ID: {ad_id} | {status}",
+        f"✅ *Анкета одобрена и опубликована!*\n🆔 ID: {ad_id} | {status}",
         parse_mode="Markdown"
     )
 
@@ -1121,18 +1508,27 @@ async def publish_to_channel(context, ad, is_vip=False):
     vip = "⭐️ VIP | " if is_vip else ""
     vip_tag = "#vip " if is_vip else ""
     city_tag = city.lower().replace(" ","_").replace("-","_").replace("'","").replace(".","")
+    prices = ad.get("prices", {})
 
     if flow == "model":
+        price_line = ""
+        if prices.get("1h") and prices["1h"] != "0":
+            price_line = f"1h: *{prices['1h']}€*"
+        if prices.get("nuit") and prices["nuit"] != "0":
+            price_line += f"  |  Nuit: *{prices['nuit']}€*"
         caption = (
             f"{vip}👗 *{ad.get('name')}, {ad.get('age')} ans* — {city}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📏 {ad.get('height')} cm  ⚖️ {ad.get('weight')} kg  📐 {ad.get('measurements')}\n"
+            f"📏 {ad.get('height')} cm  ⚖️ {ad.get('weight')} kg\n"
             f"🌍 {ad.get('nationality')}  🗣 {ad.get('languages')}\n"
             f"🏠 {ad.get('incall')}\n"
-            f"💶 1h: *{ad.get('price_1h')}€*  |  2h: *{ad.get('price_2h')}€*  |  Nuit: *{ad.get('price_night')}€*\n"
-            f"📞 {ad.get('contact')}\n\n"
-            f"{vip_tag}#{city_tag} #modele #amourannonce"
         )
+        if price_line:
+            caption += f"💶 {price_line}\n"
+        if ad.get('description') and ad['description'] != '-':
+            desc = ad['description'][:200]
+            caption += f"📝 {desc}\n"
+        caption += f"📞 {ad.get('contact')}\n\n{vip_tag}#{city_tag} #modele #amourannonce"
     elif flow == "tour":
         who_label = "Modèle" if ad.get("tour_who") == "model" else "Hôte"
         caption = (
@@ -1159,10 +1555,8 @@ async def publish_to_channel(context, ad, is_vip=False):
     try:
         if photos:
             await context.bot.send_photo(
-                chat_id=CHANNEL_ID,
-                photo=photos[0],
-                caption=caption,
-                parse_mode="Markdown"
+                chat_id=CHANNEL_ID, photo=photos[0],
+                caption=caption, parse_mode="Markdown"
             )
             if len(photos) > 1:
                 media = [InputMediaPhoto(media=p) for p in photos[1:]]
@@ -1218,6 +1612,19 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ADMIN_MENU
 
+    if data == "adm_add":
+        # Быстрое добавление анкеты от админа
+        context.user_data["flow"] = "model"
+        context.user_data["source"] = "admin"
+        context.user_data["selected_langs"] = []
+        await q.edit_message_text(
+            "➕ *Добавить анкету напрямую*\n\n"
+            "📍 Выберите регион:",
+            parse_mode="Markdown",
+            reply_markup=region_kb(context, "m")
+        )
+        return M_REGION
+
     if data == "adm_stats":
         total, vip, today, from_site = get_db_stats()
         pending = len(pending_ads)
@@ -1227,8 +1634,8 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📋 Активных анкет: *{total}*\n"
             f"⭐️ VIP: *{vip}*\n"
             f"🆕 За сегодня: *{today}*\n"
-            f"🌐 Размещено с сайта: *{from_site}*\n"
-            f"⏳ Ожидают модерации: *{pending}*",
+            f"🌐 С сайта: *{from_site}*\n"
+            f"⏳ На модерации: *{pending}*",
             reply_markup=admin_menu_kb(),
             parse_mode="Markdown"
         )
@@ -1236,10 +1643,7 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "adm_pending":
         if not pending_ads:
-            await q.edit_message_text(
-                "✅ Нет заявок на модерации.",
-                reply_markup=admin_menu_kb()
-            )
+            await q.edit_message_text("✅ Нет заявок на модерации.", reply_markup=admin_menu_kb())
             return ADMIN_MENU
         text = f"⏳ *Заявок на модерации: {len(pending_ads)}*\n\n"
         for key, ad in pending_ads.items():
@@ -1251,10 +1655,13 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "adm_all":
         conn = sqlite3.connect("annonces.db")
         c = conn.cursor()
-        c.execute("""SELECT id,type,city,name,is_vip,source,created_at
-            FROM annonces WHERE expires_at > ?
-            ORDER BY created_at DESC LIMIT 20""",
-            (datetime.now().isoformat(),))
+        try:
+            c.execute("""SELECT id,type,city,name,is_vip,source,created_at
+                FROM annonces WHERE expires_at > ?
+                ORDER BY created_at DESC LIMIT 20""",
+                (datetime.now().isoformat(),))
+        except Exception:
+            c.execute("SELECT id,type,city,name,is_vip,created_at FROM annonces ORDER BY created_at DESC LIMIT 20")
         rows = c.fetchall()
         conn.close()
         if not rows:
@@ -1262,10 +1669,9 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ADMIN_MENU
         kb = []
         for row in rows:
-            ad_id, type_, city, name, is_vip, source, created = row
+            ad_id = row[0]; type_ = row[1]; city = row[2]; name = row[3]; is_vip = row[4]
             vip_icon = "⭐️ " if is_vip else ""
-            src_icon = "🌐" if source == "site" else "📱"
-            label = f"{vip_icon}{src_icon} {type_[:1].upper()} | {city} | {name}"
+            label = f"{vip_icon}{type_[:1].upper()} | {city} | {name}"
             kb.append([InlineKeyboardButton(label, callback_data=f"adm_view_{ad_id}")])
         kb.append([InlineKeyboardButton("◀️ Назад", callback_data="go_admin")])
         await q.edit_message_text(
@@ -1289,7 +1695,7 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ad_id = int(data.replace("adm_vip_", ""))
         row = get_ad_by_id(ad_id)
         if row:
-            new_vip = 0 if row[24] else 1
+            new_vip = 0 if row[34] else 1
             set_vip(ad_id, new_vip)
             status = "⭐️ VIP включён" if new_vip else "VIP выключен"
             await q.answer(status, show_alert=True)
@@ -1311,13 +1717,41 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ADMIN_MENU
 
 
+# ─── БЫСТРОЕ ДОБАВЛЕНИЕ ОТ АДМИНА ────────────────────────────────────────────
+async def admin_approve_direct(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Когда админ заполняет анкету — она публикуется сразу без модерации."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    photos = context.user_data.get("photos", [])
+    if not photos:
+        await update.message.reply_text("⚠️ Добавьте хотя бы одно фото.")
+        return None
+
+    context.user_data["type"] = "model"
+    context.user_data["user_id"] = ADMIN_ID
+    context.user_data["source"] = "admin"
+
+    ad = dict(context.user_data)
+    ad_id = save_ad(ad, is_vip=False)
+    await publish_to_channel(context, ad, is_vip=False)
+
+    await update.message.reply_text(
+        f"✅ *Анкета добавлена и опубликована!*\n🆔 ID: {ad_id}",
+        parse_mode="Markdown",
+        reply_markup=admin_menu_kb()
+    )
+    context.user_data.clear()
+    return ADMIN_MENU
+
+
 # ─── CANCEL ───────────────────────────────────────────────────────────────────
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     if update.callback_query:
         await update.callback_query.answer()
         return await show_menu(update, context)
-    await update.message.reply_text("Отменено.", reply_markup=lang_keyboard())
+    await update.message.reply_text("Annulé.", reply_markup=lang_keyboard())
     return CHOOSE_LANG
 
 
@@ -1328,6 +1762,7 @@ def main():
 
     photo_handler = MessageHandler(filters.PHOTO, receive_photo)
     done_handler  = CommandHandler("done", done_photos)
+    admin_done    = CommandHandler("done", admin_approve_direct)
     cancel_cmd    = CommandHandler("cancel", cancel_handler)
 
     conv = ConversationHandler(
@@ -1360,48 +1795,69 @@ def main():
                 CallbackQueryHandler(cancel_handler, pattern="^go_menu$"),
             ],
 
-            M_REGION: [CallbackQueryHandler(model_region, pattern="^m_r_")],
-            M_CITY:   [CallbackQueryHandler(model_city,   pattern="^(m_c_|m_back_region)")],
-            M_NAME:        [MessageHandler(filters.TEXT & ~filters.COMMAND, model_name)],
-            M_AGE:         [MessageHandler(filters.TEXT & ~filters.COMMAND, model_age)],
-            M_HEIGHT:      [MessageHandler(filters.TEXT & ~filters.COMMAND, model_height)],
-            M_WEIGHT:      [MessageHandler(filters.TEXT & ~filters.COMMAND, model_weight)],
-            M_MEASUREMENTS:[MessageHandler(filters.TEXT & ~filters.COMMAND, model_measurements)],
-            M_NATIONALITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, model_nationality)],
-            M_LANGUAGES:   [MessageHandler(filters.TEXT & ~filters.COMMAND, model_languages)],
-            M_INCALL:      [CallbackQueryHandler(model_incall, pattern="^incall_")],
-            M_PRICE_1H:    [MessageHandler(filters.TEXT & ~filters.COMMAND, model_price_1h)],
-            M_PRICE_2H:    [MessageHandler(filters.TEXT & ~filters.COMMAND, model_price_2h)],
-            M_PRICE_NIGHT: [MessageHandler(filters.TEXT & ~filters.COMMAND, model_price_night)],
-            M_CONTACT:     [MessageHandler(filters.TEXT & ~filters.COMMAND, model_contact)],
-            M_PHOTOS: [photo_handler, done_handler, cancel_cmd,
-                       CallbackQueryHandler(cancel_handler, pattern="^go_menu$")],
+            # Model flow
+            M_REGION: [
+                CallbackQueryHandler(model_region, pattern="^m_r_"),
+                CallbackQueryHandler(admin_menu, pattern="^(go_admin|adm_)"),
+            ],
+            M_CITY:         [CallbackQueryHandler(model_city, pattern="^(m_c_|m_back_region)")],
+            M_NAME:         [MessageHandler(filters.TEXT & ~filters.COMMAND, model_name)],
+            M_AGE:          [MessageHandler(filters.TEXT & ~filters.COMMAND, model_age)],
+            M_NATIONALITY:  [MessageHandler(filters.TEXT & ~filters.COMMAND, model_nationality)],
+            M_HEIGHT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_height)],
+            M_WEIGHT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_weight)],
+            M_MEASUREMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, model_measurements)],
+            M_HAIR:         [CallbackQueryHandler(model_hair, pattern="^hair_")],
+            M_INCALL:       [CallbackQueryHandler(model_incall, pattern="^incall_")],
+            M_LANGUAGES:    [CallbackQueryHandler(model_languages, pattern="^(lang_|langs_done)")],
+            M_AVAILABILITY: [CallbackQueryHandler(model_availability, pattern="^avail_")],
+            M_PRICES:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_prices)],
+            M_DESCRIPTION:  [MessageHandler(filters.TEXT & ~filters.COMMAND, model_description)],
+            M_CONTACT:      [MessageHandler(filters.TEXT & ~filters.COMMAND, model_contact)],
+            M_PHOTOS: [
+                photo_handler,
+                CommandHandler("done", done_photos),
+                cancel_cmd,
+                CallbackQueryHandler(cancel_handler, pattern="^go_menu$"),
+            ],
 
+            # Tour flow
             T_WHO:       [CallbackQueryHandler(tour_who, pattern="^tour_who_")],
             T_FROM_CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, tour_from_city)],
             T_TO_REGION: [CallbackQueryHandler(tour_region, pattern="^t_r_")],
-            T_TO_CITY:   [CallbackQueryHandler(tour_city,   pattern="^(t_c_|t_back_region)")],
+            T_TO_CITY:   [CallbackQueryHandler(tour_city, pattern="^(t_c_|t_back_region)")],
             T_DATE_FROM: [MessageHandler(filters.TEXT & ~filters.COMMAND, tour_date_from)],
             T_DATE_TO:   [MessageHandler(filters.TEXT & ~filters.COMMAND, tour_date_to)],
+            T_NAME:      [MessageHandler(filters.TEXT & ~filters.COMMAND, tour_name)],
             T_NOTES:     [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, tour_notes),
                 CallbackQueryHandler(skip_handler, pattern="^skip$"),
             ],
             T_CONTACT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, tour_contact)],
-            T_PHOTOS:    [photo_handler, done_handler, cancel_cmd,
-                          CallbackQueryHandler(cancel_handler, pattern="^go_menu$")],
+            T_PHOTOS:    [
+                photo_handler,
+                CommandHandler("done", done_photos),
+                cancel_cmd,
+                CallbackQueryHandler(cancel_handler, pattern="^go_menu$"),
+            ],
 
+            # Ad flow
             A_REGION:  [CallbackQueryHandler(ad_region, pattern="^a_r_")],
-            A_CITY:    [CallbackQueryHandler(ad_city,   pattern="^(a_c_|a_back_region)")],
+            A_CITY:    [CallbackQueryHandler(ad_city, pattern="^(a_c_|a_back_region)")],
             A_TITLE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, ad_title)],
             A_DESC:    [MessageHandler(filters.TEXT & ~filters.COMMAND, ad_desc)],
             A_CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ad_contact)],
-            A_PHOTOS:  [photo_handler, done_handler, cancel_cmd,
-                        CallbackQueryHandler(cancel_handler, pattern="^go_menu$")],
+            A_PHOTOS:  [
+                photo_handler,
+                CommandHandler("done", done_photos),
+                cancel_cmd,
+                CallbackQueryHandler(cancel_handler, pattern="^go_menu$"),
+            ],
 
+            # Admin
             ADMIN_MENU: [
-                CallbackQueryHandler(admin_menu,     pattern="^(go_admin|adm_)"),
-                CallbackQueryHandler(show_menu,      pattern="^go_menu$"),
+                CallbackQueryHandler(admin_menu, pattern="^(go_admin|adm_)"),
+                CallbackQueryHandler(show_menu, pattern="^go_menu$"),
             ],
         },
         fallbacks=[
@@ -1416,7 +1872,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CallbackQueryHandler(moderation_action, pattern="^mod_"))
 
-    print("🚀 Бот Amour Annonce запущен...")
+    print("🚀 Бот Amour Annonce v6 запущен...")
     app.run_polling(drop_pending_updates=True)
 
 
