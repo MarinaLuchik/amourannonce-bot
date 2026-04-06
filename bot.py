@@ -678,7 +678,10 @@ def format_ad(row, ctx):
 # ─── START / MENU ─────────────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    msg = update.message or update.callback_query.message
+    context.user_data["flow"] = None
+    msg = update.message or (update.callback_query.message if update.callback_query else None)
+    if not msg:
+        return CHOOSE_LANG
     await msg.reply_text(
         "💋 *Amour Annonce*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -807,6 +810,8 @@ async def browse_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def go_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    # Полный сброс данных перед началом нового flow
+    context.user_data.clear()
     context.user_data["flow"] = "model"
     context.user_data["selected_langs"] = []
     await q.edit_message_text(
@@ -1160,6 +1165,7 @@ async def model_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def go_tour(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    context.user_data.clear()
     context.user_data["flow"] = "tour"
     l = lang(context)
     await q.edit_message_text(
@@ -1295,6 +1301,7 @@ async def tour_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def go_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    context.user_data.clear()
     context.user_data["flow"] = "ad"
     await q.edit_message_text(tx("choose_region", context), reply_markup=region_kb(context, "a"))
     return A_REGION
@@ -1801,19 +1808,19 @@ def main():
                 CallbackQueryHandler(admin_menu, pattern="^(go_admin|adm_)"),
             ],
             M_CITY:         [CallbackQueryHandler(model_city, pattern="^(m_c_|m_back_region)")],
-            M_NAME:         [MessageHandler(filters.TEXT & ~filters.COMMAND, model_name)],
-            M_AGE:          [MessageHandler(filters.TEXT & ~filters.COMMAND, model_age)],
-            M_NATIONALITY:  [MessageHandler(filters.TEXT & ~filters.COMMAND, model_nationality)],
-            M_HEIGHT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_height)],
-            M_WEIGHT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_weight)],
-            M_MEASUREMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, model_measurements)],
+            M_NAME:         [MessageHandler(filters.TEXT & ~filters.COMMAND, model_name), CommandHandler("start", start)],
+            M_AGE:          [MessageHandler(filters.TEXT & ~filters.COMMAND, model_age), CommandHandler("start", start)],
+            M_NATIONALITY:  [MessageHandler(filters.TEXT & ~filters.COMMAND, model_nationality), CommandHandler("start", start)],
+            M_HEIGHT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_height), CommandHandler("start", start)],
+            M_WEIGHT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_weight), CommandHandler("start", start)],
+            M_MEASUREMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, model_measurements), CommandHandler("start", start)],
             M_HAIR:         [CallbackQueryHandler(model_hair, pattern="^hair_")],
             M_INCALL:       [CallbackQueryHandler(model_incall, pattern="^incall_")],
             M_LANGUAGES:    [CallbackQueryHandler(model_languages, pattern="^(lang_|langs_done)")],
             M_AVAILABILITY: [CallbackQueryHandler(model_availability, pattern="^avail_")],
-            M_PRICES:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_prices)],
-            M_DESCRIPTION:  [MessageHandler(filters.TEXT & ~filters.COMMAND, model_description)],
-            M_CONTACT:      [MessageHandler(filters.TEXT & ~filters.COMMAND, model_contact)],
+            M_PRICES:       [MessageHandler(filters.TEXT & ~filters.COMMAND, model_prices), CommandHandler("start", start)],
+            M_DESCRIPTION:  [MessageHandler(filters.TEXT & ~filters.COMMAND, model_description), CommandHandler("start", start)],
+            M_CONTACT:      [MessageHandler(filters.TEXT & ~filters.COMMAND, model_contact), CommandHandler("start", start)],
             M_PHOTOS: [
                 photo_handler,
                 CommandHandler("done", done_photos),
