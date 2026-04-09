@@ -638,21 +638,24 @@ def kb_listing(ctx, contact):
 
 def kb_br_type(ctx):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(t(ctx,"btn_see_models"), callback_data="br_type_model"),
-         InlineKeyboardButton(t(ctx,"btn_see_ads"),    callback_data="br_type_annonce")],
+        [InlineKeyboardButton(t(ctx,"btn_browse"), callback_data="br_type_all")],
         [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_city")],
+        [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")],
     ])
 
 def kb_filter(ctx):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(t(ctx,"filter_all"), callback_data="f_all")],
+        [InlineKeyboardButton("👗 Profils modèles", callback_data="f_model"),
+         InlineKeyboardButton("📢 Annonces", callback_data="f_annonce")],
         [InlineKeyboardButton(t(ctx,"filter_vip"), callback_data="f_vip"),
          InlineKeyboardButton(t(ctx,"filter_new"), callback_data="f_new")],
         [InlineKeyboardButton(t(ctx,"filter_in"),  callback_data="f_in"),
          InlineKeyboardButton(t(ctx,"filter_out"), callback_data="f_out")],
         [InlineKeyboardButton(t(ctx,"filter_bl"),  callback_data="f_bl"),
          InlineKeyboardButton(t(ctx,"filter_br"),  callback_data="f_br")],
-        [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_type")],
+        [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_city")],
+        [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")],
     ])
 
 def kb_admin():
@@ -821,8 +824,9 @@ async def cb_br_city(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if idx >= len(cities): return await cb_go_browse(update, ctx)
     city = cities[idx]
     ctx.user_data["br_city"] = city
-    await eor(q, t(ctx,"choose_type",city=city), kb_br_type(ctx))
-    return ST_BR_TYPE
+    ctx.user_data["br_flow"] = "all"  # по умолчанию все
+    await eor(q, t(ctx,"filter_title",city=city), kb_filter(ctx))
+    return ST_BR_FILTER
 
 @safe_handler
 async def cb_br_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -844,35 +848,60 @@ async def cb_br_type(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 @safe_handler
 async def cb_br_filter(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    if q.data == "br_back_type":
-        city = ctx.user_data.get("br_city","")
-        await eor(q, t(ctx,"choose_type",city=city), kb_br_type(ctx))
-        return ST_BR_TYPE
     city = ctx.user_data.get("br_city","")
-    flow = ctx.user_data.get("br_flow","model")
+
+    if q.data == "br_back_city":
+        # Вернуться к выбору города
+        region = ctx.user_data.get("br_region","")
+        if region == "🗼 Paris":
+            await eor(q, t(ctx,"choose_paris"), kb_cities(ctx, region, "br"))
+        else:
+            await eor(q, f"{s(region)}\n\n{t(ctx,'choose_city')}", kb_cities(ctx, region, "br"))
+        return ST_BR_CITY
+
+    # Выбор типа объявления
+    if q.data == "f_model":
+        ctx.user_data["br_flow"] = "model"
+        await eor(q, t(ctx,"filter_title",city=city), kb_filter(ctx))
+        return ST_BR_FILTER
+    if q.data == "f_annonce":
+        ctx.user_data["br_flow"] = "annonce"
+        await eor(q, t(ctx,"filter_title",city=city), kb_filter(ctx))
+        return ST_BR_FILTER
+
+    flow = ctx.user_data.get("br_flow","all")
     filters_map = {
         "f_all": {}, "f_vip": {"vip":True}, "f_new": {"recent":True},
         "f_in":  {"incall":"Incall"}, "f_out": {"incall":"Outcall"},
         "f_bl":  {"hair":"Blonde"},   "f_br":  {"hair":"Brune"},
     }
     kw = filters_map.get(q.data, {})
-    rows = db.browse(city, flow, **kw)
+
+    # Если flow = all, показываем и модели и объявления
+    if flow == "all":
+        rows_m = db.browse(city, "model", **kw)
+        rows_a = db.browse(city, "annonce", **kw)
+        rows = rows_m + rows_a
+    else:
+        rows = db.browse(city, flow, **kw)
+
     back_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_type")],
+        [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_city")],
         [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")],
     ])
     if not rows:
         await eor(q, t(ctx,"no_results"), back_kb)
         return ST_BR_FILTER
+
     await eor(q, f"📍 <b>{s(city)}</b> — {len(rows)} résultat(s)", back_kb)
     lang = ctx.user_data.get("lang","fr")
     for row in rows:
-        caption = fmt_model(row, lang) if flow == "model" else fmt_annonce(row)
+        caption = fmt_model(row, lang) if row["flow"]=="model" else fmt_annonce(row)
         await send_album(ctx.bot, q.message.chat_id, db.media(row["id"]),
                          caption, kb_listing(ctx, row["contact"]))
     await q.message.reply_text(t(ctx,"results_end"), parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_type")],
+            [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_city")],
             [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")],
         ]))
     return ST_BR_FILTER
@@ -1336,12 +1365,8 @@ def build_app():
                 CallbackQueryHandler(cb_br_city, pattern=r"^(br_c_\d+|br_back_region)$"),
                 cancel_h,
             ],
-            ST_BR_TYPE: [
-                CallbackQueryHandler(cb_br_type, pattern=r"^(br_type_model|br_type_annonce|br_back_city)$"),
-                cancel_h,
-            ],
             ST_BR_FILTER: [
-                CallbackQueryHandler(cb_br_filter, pattern=r"^(f_all|f_vip|f_new|f_in|f_out|f_bl|f_br|br_back_type)$"),
+                CallbackQueryHandler(cb_br_filter, pattern=r"^(f_all|f_model|f_annonce|f_vip|f_new|f_in|f_out|f_bl|f_br|br_back_city)$"),
                 cancel_h,
             ],
 
