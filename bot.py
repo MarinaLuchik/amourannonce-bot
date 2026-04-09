@@ -315,7 +315,7 @@ TX = {
     ST_A_REGION, ST_A_CITY, ST_A_TITLE, ST_A_DESC,
     ST_A_CONTACT, ST_A_PHOTOS, ST_A_PREVIEW,
     ST_ADMIN,
-) = range(47)
+) = range(48)
 
 # ─── DATABASE ─────────────────────────────────────────────────────────────────
 class DB:
