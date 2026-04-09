@@ -640,8 +640,29 @@ def kb_preview(ctx):
 
 def kb_listing(ctx, contact):
     rows = []
-    url = contact_url(contact)
-    if url: rows.append([InlineKeyboardButton(t(ctx,"contact_btn"), url=url)])
+    contact = (contact or "").strip()
+    cleaned = re.sub(r'[\s\-\(\)]', '', contact)
+
+    if contact.startswith("@"):
+        # Telegram username
+        rows.append([InlineKeyboardButton(
+            "💬 Telegram", url=f"https://t.me/{contact[1:]}"
+        )])
+    elif contact.startswith("http"):
+        # Ссылка
+        rows.append([InlineKeyboardButton("🔗 Lien / Link", url=contact)])
+    elif cleaned.startswith('+') or cleaned.startswith('0'):
+        # Номер телефона — две кнопки
+        digits = re.sub(r"[^\d+]", "", contact)
+        wa_num = digits.lstrip('+')
+        rows.append([
+            InlineKeyboardButton("💬 WhatsApp", url=f"https://wa.me/{wa_num}"),
+            InlineKeyboardButton("📞 Appeler", url=f"tel:{digits}"),
+        ])
+    else:
+        # Неизвестный формат — просто поддержка
+        rows.append([InlineKeyboardButton("💬 Contacter", url=SUPPORT_URL)])
+
     rows.append([InlineKeyboardButton(t(ctx,"btn_support"), url=SUPPORT_URL)])
     return InlineKeyboardMarkup(rows)
 
@@ -866,7 +887,6 @@ async def cb_br_filter(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     city = ctx.user_data.get("br_city","")
 
     if q.data == "br_back_city":
-        # Вернуться к выбору города
         region = ctx.user_data.get("br_region","")
         if region == "🗼 Paris":
             await eor(q, t(ctx,"choose_paris"), kb_cities(ctx, region, "br"))
@@ -874,7 +894,6 @@ async def cb_br_filter(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await eor(q, f"{s(region)}\n\n{t(ctx,'choose_city')}", kb_cities(ctx, region, "br"))
         return ST_BR_CITY
 
-    # Выбор типа объявления
     if q.data == "f_model":
         ctx.user_data["br_flow"] = "model"
         await eor(q, t(ctx,"filter_title",city=city), kb_filter(ctx))
@@ -892,7 +911,6 @@ async def cb_br_filter(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     }
     kw = filters_map.get(q.data, {})
 
-    # Если flow = all, показываем и модели и объявления
     if flow == "all":
         rows_m = db.browse(city, "model", **kw)
         rows_a = db.browse(city, "annonce", **kw)
@@ -900,25 +918,29 @@ async def cb_br_filter(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         rows = db.browse(city, flow, **kw)
 
-    back_kb = InlineKeyboardMarkup([
+    # Кнопки навигации — всегда одинаковые
+    nav_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_city")],
         [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")],
     ])
+
     if not rows:
-        await eor(q, t(ctx,"no_results"), back_kb)
+        await eor(q, t(ctx,"no_results"), nav_kb)
         return ST_BR_FILTER
 
-    await eor(q, f"📍 <b>{s(city)}</b> — {len(rows)} résultat(s)", back_kb)
+    # Редактируем текущее сообщение на заголовок
+    await eor(q, f"📍 <b>{s(city)}</b> — {len(rows)} résultat(s)\n\n<i>Faites défiler ↓</i>", nav_kb)
     lang = ctx.user_data.get("lang","fr")
     for row in rows:
         caption = fmt_model(row, lang) if row["flow"]=="model" else fmt_annonce(row)
         await send_album(ctx.bot, q.message.chat_id, db.media(row["id"]),
                          caption, kb_listing(ctx, row["contact"]))
-    await q.message.reply_text(t(ctx,"results_end"), parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(t(ctx,"btn_back"), callback_data="br_back_city")],
-            [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")],
-        ]))
+    # Кнопки в конце — reply (новое сообщение) чтобы были видны
+    await q.message.reply_text(
+        f"📍 {s(city)} — {t(ctx,'results_end')}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=nav_kb
+    )
     return ST_BR_FILTER
 
 # ─── MODEL FLOW ───────────────────────────────────────────────────────────────
@@ -1215,10 +1237,108 @@ async def cb_submit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     row = db.get(lid)
     if row:
         await send_album(ctx.bot, ADMIN_ID, db.media(lid), fmt_admin(row), kb_mod(lid, row["contact"]))
-    # Всегда отправляем новое сообщение с меню (не редактируем)
-    await q.message.reply_text(t(ctx,"sent_ok"), parse_mode=ParseMode.HTML, reply_markup=kb_main(ctx, u.id))
+    lg = ctx.user_data.get("lang","fr")
+    # Сообщение об успехе
+    await q.message.reply_text(t(ctx,"sent_ok"), parse_mode=ParseMode.HTML)
+    # VIP предложение
+    if lg == "fr":
+        vip_text = (
+            "⭐️ <b>Vous souhaitez un profil VIP ?</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Les profils VIP apparaissent en <b>tête de liste</b> "
+            "et sont mis en avant dans le canal.\n\n"
+            "Pour publier en VIP, contactez l'administration :"
+        )
+    else:
+        vip_text = (
+            "⭐️ <b>Want a VIP profile?</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "VIP profiles appear at the <b>top of the list</b> "
+            "and are featured in the channel.\n\n"
+            "To publish as VIP, contact administration:"
+        )
+    await q.message.reply_text(vip_text, parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⭐️ Devenir VIP" if lg=="fr" else "⭐️ Become VIP", url=SUPPORT_URL)],
+            [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")],
+        ]))
     reset(ctx)
     return ST_MENU
+
+
+@safe_handler
+async def cmd_myads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Показывает объявления пользователя."""
+    u = update.effective_user
+    if not u: return
+    lg = ctx.user_data.get("lang", db.get_lang(u.id))
+    ctx.user_data["lang"] = lg
+
+    with closing(db._conn()) as c:
+        rows = c.execute("""
+            SELECT id, flow, city, name, ad_title, status, is_vip, created_at
+            FROM listings WHERE user_id=? AND status IN ('pending','approved')
+            ORDER BY created_at DESC LIMIT 10
+        """, (u.id,)).fetchall()
+
+    if not rows:
+        txt = "😔 Vous n'avez pas encore de publications actives." if lg=="fr" else "😔 You have no active listings yet."
+        await update.message.reply_text(txt, parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")
+            ]]))
+        return ST_MENU
+
+    if lg == "fr":
+        header = f"📋 <b>Vos publications ({len(rows)})</b>\n━━━━━━━━━━━━━━━━━━\n"
+    else:
+        header = f"📋 <b>Your listings ({len(rows)})</b>\n━━━━━━━━━━━━━━━━━━\n"
+
+    kb_rows = []
+    for row in rows:
+        vip = "⭐ " if row["is_vip"] else ""
+        status_icon = "✅" if row["status"] == "approved" else "⏳"
+        title = row["name"] or row["ad_title"] or "—"
+        label = f"{status_icon} {vip}{s(title)} — {s(row['city'])}"
+        kb_rows.append([InlineKeyboardButton(
+            f"🗑 Supprimer #{row['id']}" if lg=="fr" else f"🗑 Delete #{row['id']}",
+            callback_data=f"myads_del_{row['id']}"
+        )])
+
+    kb_rows.append([InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")])
+
+    lines = [header]
+    for row in rows:
+        vip = "⭐ VIP " if row["is_vip"] else ""
+        status = "✅ En ligne" if row["status"]=="approved" else "⏳ En attente"
+        title = row["name"] or row["ad_title"] or "—"
+        lines.append(f"• {vip}<b>{s(title)}</b> — {s(row['city'])}\n  {status} | #{row['id']}")
+
+    await update.message.reply_text("\n\n".join(lines), parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(kb_rows))
+    return ST_MENU
+
+
+@safe_handler
+async def cb_myads_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Удаляет объявление пользователя."""
+    q = update.callback_query; await q.answer()
+    u = update.effective_user
+    if not u: return
+    lid = int(q.data.replace("myads_del_",""))
+    row = db.get(lid)
+    lg = ctx.user_data.get("lang","fr")
+
+    # Проверяем что это объявление принадлежит пользователю
+    if not row or row["user_id"] != u.id:
+        await q.answer("⚠️ Non autorisé" if lg=="fr" else "⚠️ Not authorized", show_alert=True)
+        return
+
+    db.delete(lid)
+    msg = f"🗑 Publication #{lid} supprimée." if lg=="fr" else f"🗑 Listing #{lid} deleted."
+    await eor(q, msg, InlineKeyboardMarkup([
+        [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")]
+    ]))
 
 # ─── ADMIN ────────────────────────────────────────────────────────────────────
 @safe_handler
@@ -1401,6 +1521,16 @@ async def cb_go_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     return ST_MENU
 
+CHANNEL_USERNAME = "amourannonce"  # без @
+
+async def check_subscription(bot, user_id: int) -> bool:
+    """Проверяет подписан ли пользователь на канал."""
+    try:
+        member = await bot.get_chat_member(f"@{CHANNEL_USERNAME}", user_id)
+        return member.status not in ("left", "kicked", "banned")
+    except Exception:
+        return True  # если не можем проверить — пропускаем
+
 async def cleanup_job(ctx: ContextTypes.DEFAULT_TYPE):
     db.cleanup()
 
@@ -1509,6 +1639,8 @@ def build_app():
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("myads", cmd_myads))
+    app.add_handler(CallbackQueryHandler(cb_myads_delete, pattern=r"^myads_del_\d+$"))
     app.add_error_handler(error_handler)
 
     if app.job_queue:
@@ -1525,6 +1657,7 @@ def main():
         await application.bot.set_my_commands([
             ("start",  "Démarrer / Start"),
             ("menu",   "🏠 Menu principal"),
+            ("myads",  "📋 Mes annonces / My listings"),
             ("cancel", "✖️ Annuler / Cancel"),
             ("help",   "❓ Aide / Help"),
         ])
