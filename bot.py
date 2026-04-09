@@ -754,6 +754,12 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     reset(ctx)
     u = update.effective_user
     if u: db.upsert_user(u.id, get_uname(update))
+    # Убираем старую reply keyboard если есть
+    from telegram import ReplyKeyboardRemove
+    try:
+        await update.message.reply_text("·", reply_markup=ReplyKeyboardRemove())
+    except Exception:
+        pass
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(TX["fr"]["btn_site"], web_app=WebAppInfo(url=MINIAPP_URL))],
         [InlineKeyboardButton("🇫🇷 Français", callback_data="lang_fr"),
