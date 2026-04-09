@@ -1327,6 +1327,15 @@ async def cb_moderation(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ─── COMMON ───────────────────────────────────────────────────────────────────
 @safe_handler
+async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    reset(ctx)
+    lg = ctx.user_data.get("lang", "fr")
+    msg = "✖️ Annulé." if lg == "fr" else "✖️ Cancelled."
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML,
+        reply_markup=kb_main(ctx, update.effective_user.id if update.effective_user else None))
+    return ST_MENU
+
+@safe_handler
 async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return await show_menu(update, ctx)
 
@@ -1372,7 +1381,25 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 @safe_handler
 async def cb_go_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     reset(ctx)
-    return await show_menu(update, ctx)
+    u = update.effective_user
+    if u:
+        if "lang" not in ctx.user_data:
+            ctx.user_data["lang"] = db.get_lang(u.id)
+    if update.callback_query:
+        await update.callback_query.answer()
+        # Всегда отправляем новое сообщение — не редактируем
+        await update.callback_query.message.reply_text(
+            t(ctx, "welcome"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_main(ctx, u.id if u else None)
+        )
+    elif update.message:
+        await update.message.reply_text(
+            t(ctx, "welcome"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_main(ctx, u.id if u else None)
+        )
+    return ST_MENU
 
 async def cleanup_job(ctx: ContextTypes.DEFAULT_TYPE):
     db.cleanup()
@@ -1480,6 +1507,7 @@ def build_app():
     app.add_handler(CallbackQueryHandler(cb_moderation, pattern=r"^mod_(ok|vip|rej|del)_\d+$"))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(CommandHandler("menu", cmd_menu))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_error_handler(error_handler)
 
@@ -1491,6 +1519,20 @@ def build_app():
 def main():
     app = build_app()
     logger.info("🚀 Amour Annonce запущен")
+
+    async def post_init(application):
+        # Команды для меню /
+        await application.bot.set_my_commands([
+            ("start",  "Démarrer / Start"),
+            ("menu",   "🏠 Menu principal"),
+            ("cancel", "✖️ Annuler / Cancel"),
+            ("help",   "❓ Aide / Help"),
+        ])
+        # Кнопка меню рядом с полем ввода
+        from telegram import MenuButtonCommands
+        await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
+    app.post_init = post_init
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
