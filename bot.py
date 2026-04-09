@@ -561,6 +561,7 @@ def kb_main(ctx, uid=None):
         [InlineKeyboardButton(t(ctx,"btn_browse"), callback_data="go_browse")],
         [InlineKeyboardButton(t(ctx,"btn_model"),  callback_data="go_model"),
          InlineKeyboardButton(t(ctx,"btn_ad"),     callback_data="go_ad")],
+        [InlineKeyboardButton("📢 Canal — @amourannonce", url="https://t.me/amourannonce")],
         [InlineKeyboardButton(t(ctx,"btn_site"),   web_app=WebAppInfo(url=MINIAPP_URL))],
         [InlineKeyboardButton(t(ctx,"btn_support"), url=SUPPORT_URL)],
         [InlineKeyboardButton(t(ctx,"btn_agency"),  url=VMODLS_URL)],
@@ -1200,7 +1201,8 @@ async def cb_submit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     row = db.get(lid)
     if row:
         await send_album(ctx.bot, ADMIN_ID, db.media(lid), fmt_admin(row), kb_mod(lid, row["contact"]))
-    await eor(q, t(ctx,"sent_ok"), kb_main(ctx, u.id))
+    # Всегда отправляем новое сообщение с меню (не редактируем)
+    await q.message.reply_text(t(ctx,"sent_ok"), parse_mode=ParseMode.HTML, reply_markup=kb_main(ctx, u.id))
     reset(ctx)
     return ST_MENU
 
