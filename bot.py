@@ -202,7 +202,15 @@ TX = {
         "ask_prices":  "💶 <b>Étape 16</b> — Vos tarifs\n\nEntrez les prix ligne par ligne :\n<code>15min: 80\n20min: 100\n30min: 150\n45min: 200\n1h: 300\n1h30: 420\n2h: 550\nSoirée: 1200\nNuit: 1800</code>\n\n<i>Entrez 0 si non disponible</i>",
         "ask_desc":    "📝 <b>Étape 17</b> — À propos de vous :\n<i>Minimum 20 caractères</i>",
         "ask_contact": "📞 <b>Étape 18</b> — Votre contact :\n<i>@telegram, numéro (+33...) ou lien</i>",
-        "ask_photos":  f"📸 <b>Étape 19</b> — Vos photos (1–{MAX_PHOTOS})\nEnvoyez vos photos puis appuyez sur ✅ Terminer",
+        "ask_photos":  (
+            f"📸 <b>Étape 19</b> — Vos photos\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"Envoyez vos photos <b>une par une</b> (1–{MAX_PHOTOS} photos)\n\n"
+            "✅ Après chaque photo le bot confirme\n"
+            f"📌 Maximum {MAX_PHOTOS} photos\n\n"
+            "Quand vous avez fini d'envoyer toutes vos photos\n"
+            "→ appuyez sur le bouton <b>✅ Terminer</b> ci-dessous"
+        ),
         "preview_hdr": "👁 <b>Aperçu avant envoi</b>\n━━━━━━━━━━━━━━━━━━\nVérifiez vos informations :",
         "sent_ok":     "✅ <b>Envoyé en modération !</b>\nNous vous répondrons sous 24h.",
         "ad_title":    "📝 <b>Titre</b> de votre annonce :\n<i>Exemple: Massage relaxant Paris 8e</i>",
@@ -1319,6 +1327,49 @@ async def cb_moderation(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ─── COMMON ───────────────────────────────────────────────────────────────────
 @safe_handler
+async def cmd_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    return await show_menu(update, ctx)
+
+@safe_handler
+async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    lg = ctx.user_data.get("lang", "fr")
+    if lg == "fr":
+        text = (
+            "💋 <b>Amour Annonce — Aide</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "📌 <b>Commandes disponibles :</b>\n"
+            "/start — Démarrer le bot\n"
+            "/menu — Revenir au menu principal\n"
+            "/help — Afficher cette aide\n\n"
+            "📸 <b>Comment envoyer plusieurs photos :</b>\n"
+            "1. Envoyez vos photos une par une\n"
+            "2. Après chaque photo, le bot confirme\n"
+            f"3. Vous pouvez envoyer jusqu'à {MAX_PHOTOS} photos\n"
+            "4. Quand vous avez terminé → appuyez sur ✅ Terminer\n\n"
+            "⚠️ <b>Important :</b> n'appuyez pas sur ✅ Terminer avant d'avoir envoyé toutes vos photos !"
+        )
+    else:
+        text = (
+            "💋 <b>Amour Annonce — Help</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "📌 <b>Available commands:</b>\n"
+            "/start — Start the bot\n"
+            "/menu — Return to main menu\n"
+            "/help — Show this help\n\n"
+            "📸 <b>How to send multiple photos:</b>\n"
+            "1. Send your photos one by one\n"
+            "2. The bot confirms each photo\n"
+            f"3. You can send up to {MAX_PHOTOS} photos\n"
+            "4. When done → press ✅ Finish\n\n"
+            "⚠️ <b>Important:</b> don't press ✅ Finish before sending all your photos!"
+        )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🏠 Menu", callback_data="go_menu")
+        ]]))
+    return ST_MENU
+
+@safe_handler
 async def cb_go_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     reset(ctx)
     return await show_menu(update, ctx)
@@ -1414,7 +1465,7 @@ def build_app():
             # Admin
             ST_ADMIN: [
                 CallbackQueryHandler(cb_admin_actions, pattern=r"^adm_(pending|active|stats)$"),
-                cancel_h,
+                CallbackQueryHandler(cb_go_menu, pattern=r"^go_menu$"),
             ],
         },
         fallbacks=[
@@ -1428,6 +1479,8 @@ def build_app():
     # Модерация — вне ConversationHandler, работает всегда
     app.add_handler(CallbackQueryHandler(cb_moderation, pattern=r"^mod_(ok|vip|rej|del)_\d+$"))
     app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(CommandHandler("menu", cmd_menu))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_error_handler(error_handler)
 
     if app.job_queue:
