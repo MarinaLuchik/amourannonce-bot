@@ -1299,7 +1299,12 @@ async def cmd_myads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         vip = "⭐ " if row["is_vip"] else ""
         status_icon = "✅" if row["status"] == "approved" else "⏳"
         title = row["name"] or row["ad_title"] or "—"
-        label = f"{status_icon} {vip}{s(title)} — {s(row['city'])}"
+        # Строка объявления — заголовок кнопки
+        kb_rows.append([InlineKeyboardButton(
+            f"{status_icon} {vip}{title[:25]} — {row['city']}",
+            callback_data=f"myads_view_{row['id']}"
+        )])
+        # Кнопка удаления
         kb_rows.append([InlineKeyboardButton(
             f"🗑 Supprimer #{row['id']}" if lg=="fr" else f"🗑 Delete #{row['id']}",
             callback_data=f"myads_del_{row['id']}"
@@ -1310,7 +1315,10 @@ async def cmd_myads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = [header]
     for row in rows:
         vip = "⭐ VIP " if row["is_vip"] else ""
-        status = "✅ En ligne" if row["status"]=="approved" else "⏳ En attente"
+        if lg == "fr":
+            status = "✅ En ligne" if row["status"]=="approved" else "⏳ En attente"
+        else:
+            status = "✅ Live" if row["status"]=="approved" else "⏳ Pending"
         title = row["name"] or row["ad_title"] or "—"
         lines.append(f"• {vip}<b>{s(title)}</b> — {s(row['city'])}\n  {status} | #{row['id']}")
 
@@ -1337,8 +1345,90 @@ async def cb_myads_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db.delete(lid)
     msg = f"🗑 Publication #{lid} supprimée." if lg=="fr" else f"🗑 Listing #{lid} deleted."
     await eor(q, msg, InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Mes annonces" if lg=="fr" else "📋 My listings", callback_data="go_myads")],
         [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")]
     ]))
+
+
+@safe_handler
+async def cb_myads_view(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Показывает детали объявления пользователя."""
+    q = update.callback_query; await q.answer()
+    u = update.effective_user
+    if not u: return
+    lid = int(q.data.replace("myads_view_",""))
+    row = db.get(lid)
+    lg = ctx.user_data.get("lang","fr")
+
+    if not row or row["user_id"] != u.id:
+        await q.answer("⚠️ Non autorisé" if lg=="fr" else "⚠️ Not authorized", show_alert=True)
+        return
+
+    caption = fmt_model(row, lg) if row["flow"]=="model" else fmt_annonce(row)
+    status = ("✅ En ligne" if lg=="fr" else "✅ Live") if row["status"]=="approved" else ("⏳ En attente" if lg=="fr" else "⏳ Pending")
+    caption = f"{status}\n\n{caption}"
+
+    photos = db.media(lid)
+    back_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🗑 Supprimer #{lid}" if lg=="fr" else f"🗑 Delete #{lid}", callback_data=f"myads_del_{lid}")],
+        [InlineKeyboardButton("◀️ Retour" if lg=="fr" else "◀️ Back", callback_data="go_myads")],
+        [InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")],
+    ])
+    await send_album(ctx.bot, q.message.chat_id, photos, caption, back_kb)
+
+@safe_handler
+async def cb_go_myads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Callback-версия /myads — для кнопки Назад."""
+    q = update.callback_query; await q.answer()
+    # Симулируем вызов cmd_myads через message
+    u = update.effective_user
+    if not u: return
+    lg = ctx.user_data.get("lang", db.get_lang(u.id))
+    ctx.user_data["lang"] = lg
+
+    with closing(db._conn()) as c:
+        rows = c.execute("""
+            SELECT id, flow, city, name, ad_title, status, is_vip, created_at
+            FROM listings WHERE user_id=? AND status IN ('pending','approved')
+            ORDER BY created_at DESC LIMIT 10
+        """, (u.id,)).fetchall()
+
+    if not rows:
+        txt = "😔 Vous n'avez pas encore de publications actives." if lg=="fr" else "😔 You have no active listings yet."
+        await eor(q, txt, InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")
+        ]]))
+        return ST_MENU
+
+    header = (f"📋 <b>Vos publications ({len(rows)})</b>\n━━━━━━━━━━━━━━━━━━\n"
+              if lg=="fr" else
+              f"📋 <b>Your listings ({len(rows)})</b>\n━━━━━━━━━━━━━━━━━━\n")
+
+    kb_rows = []
+    for row in rows:
+        vip = "⭐ " if row["is_vip"] else ""
+        status_icon = "✅" if row["status"] == "approved" else "⏳"
+        title = row["name"] or row["ad_title"] or "—"
+        kb_rows.append([InlineKeyboardButton(
+            f"{status_icon} {vip}{title[:25]} — {row['city']}",
+            callback_data=f"myads_view_{row['id']}"
+        )])
+        kb_rows.append([InlineKeyboardButton(
+            f"🗑 Supprimer #{row['id']}" if lg=="fr" else f"🗑 Delete #{row['id']}",
+            callback_data=f"myads_del_{row['id']}"
+        )])
+    kb_rows.append([InlineKeyboardButton(t(ctx,"btn_menu"), callback_data="go_menu")])
+
+    lines = [header]
+    for row in rows:
+        vip = "⭐ VIP " if row["is_vip"] else ""
+        status = ("✅ En ligne" if row["status"]=="approved" else "⏳ En attente") if lg=="fr" else ("✅ Live" if row["status"]=="approved" else "⏳ Pending")
+        title = row["name"] or row["ad_title"] or "—"
+        lines.append(f"• {vip}<b>{s(title)}</b> — {s(row['city'])}\n  {status} | #{row['id']}")
+
+    await eor(q, "\n\n".join(lines), InlineKeyboardMarkup(kb_rows))
+    return ST_MENU
+
 
 # ─── ADMIN ────────────────────────────────────────────────────────────────────
 @safe_handler
@@ -1581,6 +1671,10 @@ def build_app():
                 CallbackQueryHandler(cb_br_city, pattern=r"^(br_c_\d+|br_back_region)$"),
                 cancel_h,
             ],
+            ST_BR_TYPE: [
+                CallbackQueryHandler(cb_br_type, pattern=r"^(br_type_all|br_back_city)$"),
+                cancel_h,
+            ],
             ST_BR_FILTER: [
                 CallbackQueryHandler(cb_br_filter, pattern=r"^(f_all|f_model|f_annonce|f_vip|f_new|f_in|f_out|f_bl|f_br|br_back_city)$"),
                 cancel_h,
@@ -1635,12 +1729,14 @@ def build_app():
     app.add_handler(conv)
     # Модерация — вне ConversationHandler, работает всегда
     app.add_handler(CallbackQueryHandler(cb_moderation, pattern=r"^mod_(ok|vip|rej|del)_\d+$"))
-    app.add_handler(CommandHandler("admin", cmd_admin))
-    app.add_handler(CommandHandler("menu", cmd_menu))
-    app.add_handler(CommandHandler("cancel", cmd_cancel))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("myads", cmd_myads))
+    app.add_handler(CallbackQueryHandler(cb_myads_view,   pattern=r"^myads_view_\d+$"))
     app.add_handler(CallbackQueryHandler(cb_myads_delete, pattern=r"^myads_del_\d+$"))
+    app.add_handler(CallbackQueryHandler(cb_go_myads,     pattern=r"^go_myads$"))
+    app.add_handler(CommandHandler("admin",  cmd_admin))
+    app.add_handler(CommandHandler("menu",   cmd_menu))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
+    app.add_handler(CommandHandler("help",   cmd_help))
+    app.add_handler(CommandHandler("myads",  cmd_myads))
     app.add_error_handler(error_handler)
 
     if app.job_queue:
